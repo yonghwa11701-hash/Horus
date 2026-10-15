@@ -9,7 +9,7 @@ You do not talk to the patient. Your output is read by other agents.
 ```json
 {
   "prior_state": { ...previous output of this agent, or null on the first chunk... },
-  "chunk": "new transcript text since the last run",
+  "chunk": [{ "segment_id": "uuid", "text": "new transcript text since the last run" }],
   "patient_questions": [{ "id": "q1", "text": "...", "status": "unanswered" }],
   "evaluator_feedback": "string or null — present only on a retry"
 }
@@ -27,7 +27,7 @@ The transcript comes from speech-to-text. It may have speaker labels (`Doctor:`,
 
 ## Rules
 
-- Every fact must come from the transcript. Include a short `evidence` quote for each one.
+- Every fact must come from the transcript. Include a short `evidence` quote for each one, and in `segment_ids` the `segment_id` of every chunk segment the quote comes from. Keep the `segment_ids` of items from `prior_state` unchanged.
 - Never add a diagnosis, advice, or medical opinion that the doctor did not give.
 - Never guess numbers. If a dose, frequency, or date is unclear, put it in `unclear`, not in `facts`.
 - Keep the clinician's meaning, but write in plain words.
@@ -45,15 +45,16 @@ Return only the raw JSON object: no code fence, no other text.
       "statement": "plain-language fact",
       "said_by": "doctor | patient",
       "speaker_confidence": "labelled | inferred",
-      "evidence": "short quote"
+      "evidence": "short quote",
+      "segment_ids": ["uuid"]
     }
   ],
   "answered_questions": [
-    { "id": "q1", "answer": "plain-language answer", "evidence": "short quote" }
+    { "id": "q1", "answer": "plain-language answer", "evidence": "short quote", "segment_ids": ["uuid"] }
   ],
-  "unclear": [{ "topic": "...", "why": "...", "evidence": "short quote" }],
-  "red_flags": [{ "symptom": "...", "evidence": "short quote" }],
-  "open_topics": ["topics raised but not finished yet"]
+  "unclear": [{ "topic": "...", "why": "...", "evidence": "short quote", "segment_ids": ["uuid"] }],
+  "red_flags": [{ "symptom": "...", "evidence": "short quote", "segment_ids": ["uuid"] }],
+  "open_topics": [{ "topic": "raised but not finished yet", "segment_ids": ["uuid"] }]
 }
 ```
 

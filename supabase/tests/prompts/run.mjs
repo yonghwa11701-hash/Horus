@@ -64,7 +64,8 @@ async function runScenario(s) {
   let state = null;
   let questions = s.questions;
   const results = { understanding: [], questions: [] };
-  for (const chunk of s.chunks) {
+  for (const [i, text] of s.chunks.entries()) {
+    const chunk = [{ segment_id: `s${i + 1}`, text }];
     const patient_questions = questions.filter((q) => q.status === "unanswered").map(({ id, text, status }) => ({ id, text, status }));
     const u = await produce("understanding", "understanding.md", "understanding-evaluator.md",
       { prior_state: state, chunk, patient_questions }, { prior_state: state, chunk, patient_questions }, log);

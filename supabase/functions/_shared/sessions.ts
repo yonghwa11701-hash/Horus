@@ -48,20 +48,7 @@ export async function appendTranscript(body: SegmentInput, ctx: RequestContext) 
   // Person 3 must make processing idempotent and update processing_status after success.
   if (Deno.env.get('ENABLE_AGENT_DISPATCH') !== 'true') return { segment, agent_dispatch: 'pending' };
   EdgeRuntime.waitUntil((async () => {
-    let delivered = false;
-    try {
-      const response = await fetch(`${env('SUPABASE_URL')}/functions/v1/process-segment`, {
-        method: 'POST',
-        headers: {
-          Authorization: ctx.authorization, apikey: env('SUPABASE_ANON_KEY'),
-          'Content-Type': 'application/json', Accept: 'application/json;version=1',
-        },
-        body: JSON.stringify({ session_id: segment.session_id, segment_id: segment.id }),
-        signal: AbortSignal.timeout(20000),
-      });
-      delivered = response.ok;
-      await response.body?.cancel();
-    } catch { /* The segment remains pending and can be retried with its original id. */ }
+    const delivered = await dispatchAgents(ctx.authorization, segment.session_id, segment.id);
     // Record dispatch state without transcript/response content or credentials.
     try {
       await recordSystemEvent(adminClient(), segment.session_id, delivered ? 'agent.dispatch_delivered' : 'agent.dispatch_pending', {
@@ -70,6 +57,25 @@ export async function appendTranscript(body: SegmentInput, ctx: RequestContext) 
     } catch { /* Discard may already have removed this session. Never log its contents. */ }
   })());
   return { segment, agent_dispatch: 'scheduled' };
+}
+
+// Starts process-segment as the patient. False if it was not delivered: the segment stays pending.
+export async function dispatchAgents(authorization: string, sessionId: string, segmentId: string) {
+  try {
+    const response = await fetch(`${env('SUPABASE_URL')}/functions/v1/process-segment`, {
+      method: 'POST',
+      headers: {
+        Authorization: authorization, apikey: env('SUPABASE_ANON_KEY'),
+        'Content-Type': 'application/json', Accept: 'application/json;version=1',
+      },
+      body: JSON.stringify({ session_id: sessionId, segment_id: segmentId }),
+      signal: AbortSignal.timeout(20000),
+    });
+    await response.body?.cancel();
+    return response.ok;
+  } catch {
+    return false;
+  }
 }
 
 export async function updateSession(

@@ -7,7 +7,7 @@ You check one output of the Understanding Agent against the transcript. You do n
 ```json
 {
   "prior_state": { ... },
-  "chunk": "the transcript text the agent received",
+  "chunk": [{ "segment_id": "uuid", "text": "the transcript text the agent received" }],
   "patient_questions": [ ... ],
   "output": { ...the Understanding Agent output... }
 }

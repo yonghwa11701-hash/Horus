@@ -13,3 +13,4 @@ export const transcriptRequest = sessionRequest.extend({
   end_ms: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
   source: z.enum(transcriptSources),
 }).refine((value) => value.end_ms >= value.start_ms);
+export const processSegmentRequest = sessionRequest.extend({ segment_id: z.uuid() });
