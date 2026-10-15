@@ -1,7 +1,6 @@
 import { randomUUID } from 'expo-crypto';
 import { router } from 'expo-router';
-import { usePreventRemove } from 'expo-router/react-navigation';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -16,15 +15,16 @@ export default function Consent() {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Leaving mid-request would let the pending result open Live anyway.
-  usePreventRemove(pending, () => {});
+  // If the user leaves while create-session is pending, don't open Live when it resolves.
+  const left = useRef(false);
+  useEffect(() => () => void (left.current = true), []);
 
   async function start() {
     setPending(true);
     setError(null);
     try {
       await createConsultation(agreed, sessionId);
-      router.replace(`/session/${sessionId}`);
+      if (!left.current) router.replace(`/session/${sessionId}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Couldn’t start. Try again.');
       setPending(false);

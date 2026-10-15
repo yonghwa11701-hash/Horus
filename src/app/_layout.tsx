@@ -13,7 +13,9 @@ export default function RootLayout() {
     <ThemeProvider value={{ ...DefaultTheme, colors: { ...DefaultTheme.colors, background: C.bg } }}>
       <StatusBar style="dark" />
       <AnimatedSplashOverlay />
+      {/* Declared screens come first in the navigator; on native the first one is the initial route. */}
       <Stack screenOptions={{ headerShown: false }}>
+        <Stack.Screen name="index" />
         <Stack.Screen name="session/[id]/index" options={{ gestureEnabled: false }} />
         <Stack.Screen name="session/[id]/ending" options={{ gestureEnabled: false }} />
       </Stack>

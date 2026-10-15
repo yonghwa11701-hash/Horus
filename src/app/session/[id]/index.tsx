@@ -42,7 +42,7 @@ function merge(rows: Rows, incoming: Suggestion[]): Rows {
 export default function Live() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const [error, setError] = useState<string | null>(null);
-  const voice = useConsultationVoice({ sessionId: id, onError: (e) => setError(e.message) });
+  const voice = useConsultationVoice({ sessionId: id, onError: (e) => setError(`Not listening: ${e.message}`) });
   const [rows, setRows] = useState<Rows>(new Map());
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
   const [answered, setAnswered] = useState<Suggestion[]>([]);
@@ -128,7 +128,9 @@ export default function Live() {
     try {
       await voice.pause();
       setPaused(true);
-    } catch {}
+    } catch (e) {
+      setError(`Couldn’t pause: ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
 
   async function end() {
@@ -136,7 +138,8 @@ export default function Live() {
     try {
       await voice.end();
       router.replace(`/session/${id}/ending`);
-    } catch {
+    } catch (e) {
+      setError(`Couldn’t end: ${e instanceof Error ? e.message : String(e)}`);
       setEnding(false);
     }
   }
@@ -181,8 +184,8 @@ export default function Live() {
           action={{ label: 'Continue anyway', onPress: voice.acknowledgeUnconfirmedAudio }}
         />
       )}
-      {error && !voice.unconfirmedAudio && voice.phase === 'error' && (
-        <Banner text={`Not listening: ${error}`} action={{ label: 'Try again', onPress: listen }} />
+      {error && !voice.unconfirmedAudio && (
+        <Banner text={error} action={voice.phase === 'error' ? { label: 'Try again', onPress: listen } : undefined} />
       )}
 
       <ScrollView contentContainerStyle={s.qs}>
