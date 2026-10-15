@@ -17,6 +17,7 @@ function callModel(promptFile, input) {
     const p = spawn("claude", ["-p", "--system-prompt-file", path.join(PROMPTS, promptFile), "--tools", "",
       "--no-session-persistence", "--setting-sources", "", "--strict-mcp-config", "--model", MODEL,
       "--output-format", "json"]);
+    p.once("error", reject);
     let out = "", err = "";
     p.stdout.on("data", (d) => (out += d));
     p.stderr.on("data", (d) => (err += d));
