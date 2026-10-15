@@ -27,6 +27,9 @@ export default function AppTabs() {
           <TabTrigger name="explore" href="/explore" asChild>
             <TabButton>Explore</TabButton>
           </TabTrigger>
+          <TabTrigger name="voice-debug" href="/voice-debug" asChild>
+            <TabButton>Debug</TabButton>
+          </TabTrigger>
         </CustomTabList>
       </TabList>
     </Tabs>
