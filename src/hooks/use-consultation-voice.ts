@@ -6,6 +6,7 @@ import {
 } from '@/lib/consultations';
 import { EMPTY_SCRIBE_DIAGNOSTICS, ScribeConnection } from '@/lib/voice/scribe';
 import { voiceDebug } from '@/lib/voice/debug';
+import { isConsultationId } from '@/lib/consultation-state';
 import type { MicrophoneBuffer } from '@/lib/voice/pcm';
 import type { FinalTranscriptInput, TranscriptSegment } from '@/types/consultation';
 import { useMicrophone } from './use-microphone';
@@ -70,7 +71,7 @@ export function useConsultationVoice(options: Options) {
 
   const reportError = useCallback((value: unknown) => {
     const error = value instanceof Error ? value : new Error('Voice capture failed.');
-    voiceDebug('error', { stage: 'voice', outcome: 'failure', ...(diagnosticSource.current?.diagnostics ?? {}) });
+    voiceDebug('error', { stage: 'voice', outcome: 'failure', session_id_valid: isConsultationId(callbacks.current.sessionId), ...(diagnosticSource.current?.diagnostics ?? {}) });
     if (connection.current?.hasUnconfirmedAudio) markUnconfirmed();
     stopMicrophone.current();
     connection.current?.close();
@@ -126,6 +127,9 @@ export function useConsultationVoice(options: Options) {
   }, []);
 
   const start = useCallback(async () => {
+    if (!isConsultationId(options.sessionId)) {
+      throw reportError(new Error('No valid consultation is open. Return to Home and start a consultation.'));
+    }
     if (unconfirmed.current) throw new Error('Review and explicitly acknowledge the unconfirmed audio before resuming.');
     if (busy.current || connection.current) throw new Error('Voice is already starting or running.');
     busy.current = true;

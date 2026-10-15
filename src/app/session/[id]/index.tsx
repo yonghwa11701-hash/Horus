@@ -1,5 +1,5 @@
 import * as Haptics from 'expo-haptics';
-import { router, useLocalSearchParams } from 'expo-router';
+import { Redirect, router, useLocalSearchParams } from 'expo-router';
 import { usePreventRemove } from 'expo-router/react-navigation';
 import { useEffect, useRef, useState } from 'react';
 import { AccessibilityInfo, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
@@ -10,6 +10,7 @@ import { Banner, Btn, confirm } from '@/components/ui';
 import { C } from '@/constants/theme';
 import { useConsultationVoice } from '@/hooks/use-consultation-voice';
 import { loadConsultation, subscribeToConsultation } from '@/lib/consultations';
+import { isConsultationId } from '@/lib/consultation-state';
 import type { Suggestion } from '@/types/consultation';
 
 const RANK = { critical: 0, high: 1, medium: 2, low: 3 } as const;
@@ -39,8 +40,13 @@ function merge(rows: Rows, incoming: Suggestion[]): Rows {
   return next;
 }
 
-export default function Live() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+export default function LiveRoute() {
+  const { id } = useLocalSearchParams<{ id: string | string[] }>();
+  if (!isConsultationId(id)) return <Redirect href="/" />;
+  return <Live key={id} id={id} />;
+}
+
+function Live({ id }: { id: string }) {
   const [error, setError] = useState<string | null>(null);
   const voice = useConsultationVoice({ sessionId: id, onError: (e) => setError(e.message) });
   const [rows, setRows] = useState<Rows>(new Map());

@@ -1,5 +1,10 @@
 import type { Session, Suggestion, TranscriptSegment } from '../types/consultation.ts';
 
+// Match the server's z.uuid() boundary; do not coerce missing or array route params.
+export function isConsultationId(value: unknown): value is string {
+  return typeof value === 'string' && /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$/i.test(value);
+}
+
 export type ConsultationSnapshot = { session: Session; segments: TranscriptSegment[]; suggestions: Suggestion[] };
 export type ConsultationEvent =
   | { kind: 'session'; row: Session }

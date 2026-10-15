@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { test, type TestContext } from 'node:test';
 import { ScribeConnection, type ScribeDiagnostics, type ScribeFinal } from '../src/lib/voice/scribe.ts';
-import { replayConsultationEvents } from '../src/lib/consultation-state.ts';
+import { isConsultationId, replayConsultationEvents } from '../src/lib/consultation-state.ts';
 import type { Session, Suggestion, TranscriptSegment } from '../src/types/consultation.ts';
 
 class FakeSocket {
@@ -42,6 +42,17 @@ function commit(socket: FakeSocket, text: string) {
   socket.emit({ message_type: 'committed_transcript_with_timestamps', text,
     words: text ? [{ start: 0, end: 0.5 }] : [] });
 }
+
+test('consultation UUID boundary rejects missing, array and literal dynamic-route values', () => {
+  for (const value of [undefined, null, '', 'undefined', '[id]', 'session/[id]', 'not-a-uuid', [], ['abcdef01-2345-4678-9abc-def012345678'], {}]) {
+    assert.equal(isConsultationId(value), false);
+  }
+  for (const value of ['abcdef01-2345-4678-9abc-def012345678', 'ABCDEF01-2345-4678-9ABC-DEF012345678', '01998b60-0000-7000-8000-000000000001', '00000000-0000-0000-0000-000000000000', 'ffffffff-ffff-ffff-ffff-ffffffffffff']) {
+    assert.equal(isConsultationId(value), true);
+  }
+  assert.equal(isConsultationId('abcdef01-2345-0678-9abc-def012345678'), false, 'Unsupported UUID version');
+  assert.equal(isConsultationId('abcdef01-2345-4678-0abc-def012345678'), false, 'Invalid UUID variant');
+});
 
 // The real resampler + transport state machine are exercised; only the external socket is fake.
 test('finish waits for an earlier commit AND a separately acknowledged buffered tail', async (t) => {
