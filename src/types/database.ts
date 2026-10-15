@@ -107,6 +107,13 @@ export type Database = {
         Args: { p_session_id: string; p_lock_id: string; p_lease_seconds: number };
         Returns: Database['public']['Tables']['consultation_memory']['Row'][];
       };
+      save_agent_batch: {
+        Args: {
+          p_session_id: string; p_lock_id: string; p_understanding: Json; p_questions: Json;
+          p_created: Json; p_changed: Json; p_segment_ids: string[]; p_events: Json;
+        };
+        Returns: boolean;
+      };
       complete_consultation: {
         Args: { p_session_id: string };
         Returns: Database['public']['Tables']['sessions']['Row'][];

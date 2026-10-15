@@ -21,8 +21,10 @@ async function systemPrompt(file: string) {
 }
 
 // One agent call: prompt file as system, JSON input as the user turn, JSON object back.
-// A malformed reply is re-requested once; HTTP errors are retried by the SDK.
-export async function callAgent<T>(file: string, model: string, input: unknown, schema: z.ZodType<T>): Promise<T> {
+// A malformed reply is re-requested once; HTTP errors are retried by the SDK. `signal` aborts at the caller's deadline.
+export async function callAgent<T>(
+  file: string, model: string, input: unknown, schema: z.ZodType<T>, signal?: AbortSignal,
+): Promise<T> {
   client ??= new Anthropic({ apiKey: env('ANTHROPIC_API_KEY'), timeout: 60_000, maxRetries: 2 });
   const system = await systemPrompt(file);
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -34,7 +36,7 @@ export async function callAgent<T>(file: string, model: string, input: unknown, 
       output_config: { effort: 'medium' },
       // Sonnet 5.5 safeguards can decline medical text; let the API reroute instead of failing.
       ...(model.startsWith('claude-sonnet-5-5') ? { betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' } : {}),
-    } as Anthropic.Beta.MessageCreateParamsNonStreaming);
+    } as Anthropic.Beta.MessageCreateParamsNonStreaming, { signal });
     if (response.stop_reason === 'refusal') throw new ApiError(502, 'agent_refused', 'An agent declined the request');
     const text = response.content.flatMap((block) => (block.type === 'text' ? [block.text] : [])).join('');
     try {

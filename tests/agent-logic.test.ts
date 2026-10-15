@@ -24,11 +24,19 @@ test('new questions get server ids, capped at 3, exact duplicates dropped', () =
     { id: 'new-4', text: 'C?', status: 'unanswered' },
     { id: 'new-5', text: 'D?', status: 'unanswered' },
     { id: 'q99', text: 'unknown id', status: 'unanswered' },
-  ];
+  ].map((x) => ({ ...x, source_segment_ids: ['seg-1'] }));
   const r = mergeQuestions(before, out, uuid);
   assert.deepEqual(r.created.map((x) => [x.id, x.text, x.priority]), [['q2', 'A?', 1], ['q3', 'B?', 5], ['q4', 'C?', 5]]);
   assert.equal(r.questions.length, 4);
   assert.ok(r.created.every((x) => x.source === 'ai' && x.question_id.startsWith('uuid-')));
+});
+
+test('new questions without a cited segment are dropped', () => {
+  const r = mergeQuestions([], [
+    { id: 'new-1', text: 'Uncited?', status: 'unanswered' },
+    { id: 'new-2', text: 'Cited?', status: 'unanswered', source_segment_ids: ['seg-2'] },
+  ], uuid);
+  assert.deepEqual(r.created.map((x) => [x.text, x.source_segment_ids]), [['Cited?', ['seg-2']]]);
 });
 
 test('existing text is never rewritten, answered never reverts, patient questions never dismissed', () => {

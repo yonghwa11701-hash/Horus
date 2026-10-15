@@ -10,8 +10,11 @@ export type MemoryQuestion = {
   status: QuestionStatus;
   priority: number; // 1 (most urgent) .. 5
   reason?: string;
+  source_segment_ids?: string[]; // AI questions only: the transcript segments the question comes from
 };
-export type QuestionOut = { id: string; text: string; source?: string; status: string; priority?: number; reason?: string };
+export type QuestionOut = {
+  id: string; text: string; source?: string; status: string; priority?: number; reason?: string; source_segment_ids?: string[];
+};
 
 const MAX_NEW = 3;
 const STATUSES: QuestionStatus[] = ['unanswered', 'answered', 'dismissed'];
@@ -32,7 +35,8 @@ export const suggestionStatus = (s: QuestionStatus) =>
 
 // Applies an evaluator-approved Question Generation output to the stored list. The server, not
 // the model, enforces the hard rules: question text never changes, answered never reverts,
-// patient questions are never dismissed, at most 3 new questions, and no exact duplicates.
+// patient questions are never dismissed, at most 3 new questions, no exact duplicates, and every
+// new question cites at least one transcript segment (pass only ids already checked against the session).
 export function mergeQuestions(before: MemoryQuestion[], output: QuestionOut[], newId: () => string) {
   const next = before.map((q) => ({ ...q }));
   const byId = new Map(next.map((q) => [q.id, q]));
@@ -55,10 +59,12 @@ export function mergeQuestions(before: MemoryQuestion[], output: QuestionOut[], 
       continue;
     }
     const text = out.text?.trim();
-    if (!out.id.startsWith('new-') || !text || created.length >= MAX_NEW || seen.has(text.toLowerCase())) continue;
+    const sources = out.source_segment_ids ?? [];
+    if (!out.id.startsWith('new-') || !text || !sources.length || created.length >= MAX_NEW || seen.has(text.toLowerCase())) continue;
     const q: MemoryQuestion = {
       id: `q${next.length + 1}`, question_id: newId(), text, source: 'ai',
       status: status === 'dismissed' ? 'unanswered' : status, priority: clampPriority(out.priority, 5), reason: out.reason,
+      source_segment_ids: sources,
     };
     seen.add(text.toLowerCase());
     next.push(q);
