@@ -48,3 +48,7 @@ example
 # generated native folders
 /ios
 /android
+
+# local design/brainstorm + browser tooling artifacts
+.superpowers/
+.playwright-mcp/
