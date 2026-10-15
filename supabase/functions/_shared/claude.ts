@@ -29,6 +29,7 @@ async function systemPrompt(file: string) {
 // A malformed reply is re-requested once; HTTP errors are retried by the SDK. `signal` aborts at the caller's deadline.
 export async function callAgent<T>(
   file: string, model: string, input: unknown, schema: z.ZodType<T>, signal?: AbortSignal,
+  effort: 'low' | 'medium' = 'medium',
 ): Promise<T> {
   client ??= new Anthropic({ apiKey: env('ANTHROPIC_API_KEY'), timeout: 60_000, maxRetries: 2 });
   const system = await systemPrompt(file);
@@ -38,7 +39,7 @@ export async function callAgent<T>(
       max_tokens: 16000,
       system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }],
       messages: [{ role: 'user', content: JSON.stringify(input) }],
-      output_config: { effort: 'medium' },
+      output_config: { effort },
       // Sonnet 5.5 safeguards can decline medical text; let the API reroute instead of failing.
       ...(model.startsWith('claude-sonnet-5-5') ? { betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' } : {}),
     } as Anthropic.Beta.MessageCreateParamsNonStreaming, { signal }).catch((error: unknown) => {

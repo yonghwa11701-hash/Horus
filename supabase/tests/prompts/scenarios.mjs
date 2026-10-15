@@ -4,6 +4,86 @@ const pq = (id, text) => ({ id, text, source: "patient", status: "unanswered", p
 
 export const scenarios = [
   {
+    name: "polish-language",
+    description: "Polish questions and summary stay Polish after an English filler chunk",
+    questions: [pq("q1", "Kiedy mam odebrać wyniki?")],
+    chunks: [
+      "Pacjent: Od trzech dni boli mnie gardło. Kiedy będą wyniki?\nLekarz: Zlecam badanie krwi. Wyniki będą w piątek. Proszę wrócić za dwa tygodnie.",
+      "Patient: Okay.\nDoctor: Okay.",
+    ],
+    expect: ({ state, questions, summary, check }) => {
+      check(/^pl(?:-|$)/i.test(state.language ?? ""), "Polish language was lost or switched by filler");
+      check(/badani|gardł|wynik/i.test(summary.headline), "headline is not recognizably Polish");
+      const generated = questions.filter((q) => q.source === "ai");
+      check(generated.length > 0, "no question generated for missing blood-test logistics");
+      check(generated.every((q) => !/\b(what|when|how|should|which|why|where)\b/i.test(q.text)), "new Polish question fell back to English");
+      check(summary.answered_questions.some((q) => q.question === "Kiedy mam odebrać wyniki?"), "original Polish question was rewritten");
+    },
+  },
+  {
+    name: "spanish-unclear-dose",
+    description: "Spanish output includes a translated clarification, never the fixed English dose message",
+    questions: [pq("q1", "¿Qué dosis debo tomar?")],
+    chunks: ["Paciente: No entendí la dosis. ¿Cuánto tengo que tomar?\nMédica: Tome amoxicilina [inaudible] mg. Le daré la receta por escrito. Vuelva en 10 días."],
+    expect: ({ state, questions, summary, check }) => {
+      check(/^es(?:-|$)/i.test(state.language ?? ""), "Spanish language was not detected");
+      check(/dosis|amoxicilina|receta/i.test(summary.headline), "headline is not recognizably Spanish");
+      check(!s(summary).includes("the dose was not clear"), "unclear-dose message remained English");
+      check(/dosis/i.test(s([summary.medications, summary.unclear])), "Spanish summary lost the unclear dose");
+      check(!/500/.test(s(summary.medications)), "a dose was invented from inaudible audio");
+      check(questions.filter((q) => q.source === "ai").every((q) => !/\b(what|when|how|should|which|why|where)\b/i.test(q.text)), "Spanish question fell back to English");
+    },
+  },
+  {
+    name: "mixed-language-patient-spanish",
+    description: "Spanish patient and English clinician: generated content follows the patient's language",
+    questions: [pq("q1", "¿Cuándo recibiré los resultados?")],
+    chunks: ["Paciente: Me duele la garganta desde hace tres días. ¿Cuándo estarán los resultados?\nDoctor: I'll order a blood test. Your results will be ready on Friday. Come back in two weeks.\nPaciente: Gracias. Quisiera saber dónde tengo que hacerme el análisis.\nDoctor: Reception can help with that."],
+    expect: ({ state, summary, check }) => {
+      check(/^es(?:-|$)/i.test(state.language ?? ""), "mixed conversation ignored the patient's Spanish");
+      check(/viernes/i.test(s(summary.answered_questions)), "doctor's answer was not expressed in Spanish");
+      check(/(dos|2) semanas/i.test(s(summary.next_steps)), "translated follow-up changed or lost the two-week interval");
+      check(summary.answered_questions.some((q) => q.question === "¿Cuándo recibiré los resultados?"), "patient's Spanish question was rewritten");
+    },
+  },
+  {
+    name: "asked-without-answer",
+    description: "patient paraphrases a visible question; hide it as asked, not answered",
+    questions: [{ ...pq("q1", "When should I get the results?"), source: "ai" }],
+    chunks: ["Patient: When will my results be ready?\nDoctor: Let's finish going through your notes."],
+    expect: ({ state, questions, summary, check }) => {
+      check(state.asked_questions?.some((q) => q.id === "q1"), "patient's paraphrased question was not detected");
+      check(questions.find((q) => q.id === "q1")?.status === "asked", "q1 must be asked, not answered or unanswered");
+      check(!state.answered_questions?.some((q) => q.id === "q1"), "asking alone must not imply a doctor's answer");
+      check(summary.still_to_ask.includes("When should I get the results?"), "asked-but-unanswered q1 missing from follow-up");
+    },
+  },
+  {
+    name: "doctor-mention-is-not-asked",
+    description: "a doctor's quoted suggestion and patient acknowledgment do not mean the patient asked it",
+    questions: [{ ...pq("q1", "When should I get the results?"), source: "ai" }],
+    chunks: ["Doctor: You can ask, 'When should I get the results?', when we finish.\nPatient: Okay."],
+    expect: ({ state, questions, check }) => {
+      check(!state.asked_questions?.some((q) => q.id === "q1"), "doctor's invitation was mistaken for a patient question");
+      check(questions.find((q) => q.id === "q1")?.status === "unanswered", "unasked q1 must remain visible");
+    },
+  },
+  {
+    name: "asked-then-answered",
+    description: "a later doctor answer resolves a previously asked question",
+    questions: [{ ...pq("q1", "When should I get the results?"), source: "ai" }],
+    chunks: [
+      "Patient: When will my results be ready?\nDoctor: Let me check the schedule.",
+      "Doctor: Your results will be ready on Friday.",
+    ],
+    expect: ({ state, questions, summary, check }) => {
+      check(state.asked_questions?.some((q) => q.id === "q1"), "lost the earlier asked record");
+      check(questions.find((q) => q.id === "q1")?.status === "answered", "later doctor answer did not resolve q1");
+      check(!summary.still_to_ask.includes("When should I get the results?"), "answered q1 still outstanding");
+      check(summary.answered_questions.some((q) => q.question === "When should I get the results?"), "answered q1 missing from summary");
+    },
+  },
+  {
     name: "clear-labelled",
     description: "labelled speakers, clear antibiotic dose and follow-up, one patient question answered",
     questions: [pq("q1", "How long do I take the antibiotic for?")],

@@ -5,7 +5,7 @@ import type { RequestContext } from './http.ts';
 import { adminClient, ApiError, databaseError } from './http.ts';
 import { ownedSession, recordSystemEvent, saveJsonArtifact } from './artifacts.ts';
 import { assertAgentConfigured, AGENT_MODEL, callAgent, REVIEW_MODEL } from './claude.ts';
-import { mergeQuestions, priorityLevel, suggestionStatus, type MemoryQuestion, type QuestionOut } from './agent-logic.ts';
+import { groundedAskedQuestionIds, mergeQuestions, priorityLevel, suggestionStatus, type MemoryQuestion, type QuestionOut } from './agent-logic.ts';
 import { dispatchAgents } from './sessions.ts';
 
 declare const EdgeRuntime: { waitUntil(task: Promise<unknown>): void };
@@ -33,8 +33,10 @@ const evaluation = z.object({
 });
 type Evaluation = z.infer<typeof evaluation>;
 const understandingOutput = z.looseObject({
+  language: z.string().min(1).optional(), // Additive hint; older stored states have no language field.
   facts: z.array(z.unknown()),
   answered_questions: z.array(z.looseObject({ id: z.string() })),
+  asked_questions: z.array(z.object({ id: z.string(), evidence: z.string(), segment_ids: z.array(z.string()).min(1) })).default([]),
   unclear: z.array(z.unknown()),
   red_flags: z.array(z.unknown()),
   open_topics: z.array(z.unknown()),
@@ -74,14 +76,21 @@ async function produce<T>(
   const attempts: { output: T; verdict: Evaluation }[] = [];
   let feedback: string | null = null;
   for (let i = 1; i <= MAX_RETRIES + 1; i++) {
-    const output: T = await callAgent(producer, model, { ...input, evaluator_feedback: feedback }, schema, signal);
+    const producerStart = Date.now();
+    // Faster live producers; keep the independent Sonnet judges and summary at medium effort.
+    const output: T = await callAgent(producer, model, { ...input, evaluator_feedback: feedback }, schema, signal,
+      agent === 'summary' ? 'medium' : 'low');
+    const producerMs = Date.now() - producerStart;
+    const reviewStart = Date.now();
     const verdict: Evaluation = await callAgent(evaluator, REVIEW_MODEL, { ...evalInput, output }, evaluation, signal);
+    const reviewMs = Date.now() - reviewStart;
     attempts.push({ output, verdict });
     const artifact = await saveJsonArtifact(admin, session, 'evaluation', {
       agent, attempt: i, ...context, output: output as Json, evaluation: verdict as Json,
     });
     await recordSystemEvent(admin, session.id, `agent.${agent}.evaluated`, {
       attempt: i, pass: verdict.pass, score: verdict.score,
+      producer_ms: producerMs, review_ms: reviewMs,
       failed_checks: verdict.issues.flatMap((issue) => (issue.check ? [issue.check] : [])),
     }, artifact.id);
     if (verdict.pass) return { output, verdict, attempts: i, flagged: false };
@@ -126,10 +135,22 @@ async function runBatch(admin: Admin, session: Session, memory: Memory, lockId: 
     const understandingInput = {
       prior_state: memory.understanding,
       chunk: segments.map((s) => ({ segment_id: s.id, text: s.text })),
-      patient_questions: questions.filter((q) => q.status === 'unanswered').map(({ id, text, status }) => ({ id, text, status })),
+      patient_questions: questions.filter((q) => q.status === 'unanswered' || q.status === 'asked').map(({ id, text, status }) => ({ id, text, status })),
     };
     const understanding = await produce(admin, session, 'understanding', understandingOutput,
       understandingInput, understandingInput, context, signal);
+    const prior = understandingOutput.safeParse(memory.understanding);
+    const priorAsked = prior.success ? prior.data.asked_questions : [];
+    const questionIds = new Set(questions.map((q) => q.id));
+    const askedIds = understanding.flagged ? new Set<string>() : groundedAskedQuestionIds(
+      understanding.output.asked_questions.filter((q) => questionIds.has(q.id)), segments, priorAsked,
+    );
+    // Carry forward only grounded records and preserve their original quotes/segment ids.
+    if (!understanding.flagged) {
+      const priorById = new Map(priorAsked.map((q) => [q.id, q]));
+      understanding.output.asked_questions = understanding.output.asked_questions
+        .filter((q) => askedIds.has(q.id)).map((q) => priorById.get(q.id) ?? q);
+    }
     await saveJsonArtifact(admin, session, 'understanding', { ...context, flagged: understanding.flagged, state: understanding.output as Json });
 
     // Only evaluator-approved output moves on (CLAUDE.md §3). A rejected understanding is neither
@@ -145,10 +166,9 @@ async function runBatch(admin: Admin, session: Session, memory: Memory, lockId: 
         { understanding: understanding.output, questions: before },
         { understanding: understanding.output, questions_before: before }, context, signal);
       await saveJsonArtifact(admin, session, 'questions', { ...context, flagged: generated.flagged, output: generated.output as Json });
-      // A flagged list is rejected whole; the next chunk tries again from the unchanged list.
-      if (!generated.flagged) {
-        merged = mergeQuestions(questions, await withKnownSources(admin, session.id, generated.output.questions), () => crypto.randomUUID());
-      }
+      // Reject unapproved generated questions, but retain independently approved asked evidence.
+      const output = generated.flagged ? [] : await withKnownSources(admin, session.id, generated.output.questions);
+      merged = mergeQuestions(questions, output, () => crypto.randomUUID(), askedIds);
       score = generated.verdict.score;
       attempts = generated.attempts;
       events.push({ event_type: generated.flagged ? 'agent.questions.rejected' : 'agent.questions.approved', metadata: {
@@ -167,6 +187,7 @@ async function runBatch(admin: Admin, session: Session, memory: Memory, lockId: 
     }));
     for (const q of created) events.push({ event_type: 'suggestion.created', metadata: { question_id: q.question_id, priority: q.priority } });
     for (const q of changed) {
+      if (q.status === 'asked') events.push({ event_type: 'suggestion.asked', metadata: { question_id: q.question_id } });
       if (q.status === 'resolved') events.push({ event_type: 'suggestion.resolved', metadata: { question_id: q.question_id } });
     }
     const { data: saved, error: saveError } = await admin.rpc('save_agent_batch', {

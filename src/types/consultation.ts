@@ -40,7 +40,8 @@ export type ArtifactEnvelope = {
 
 // Realtime contracts are Postgres row changes, not a separate broadcast protocol:
 // transcript_segments INSERT -> transcript.final
-// suggestions INSERT -> suggestion.created; UPDATE status=resolved -> suggestion.resolved
+// suggestions INSERT -> suggestion.created; UPDATE status=asked -> suggestion.asked (hide card)
+// UPDATE status=resolved -> suggestion.resolved (clinician answered)
 // sessions UPDATE status=completed -> summary.ready (summary artifact already persisted)
 export const PATIENT_ARTIFACTS_BUCKET = 'patient-artifacts';
 export const API_ACCEPT = 'application/json;version=1';

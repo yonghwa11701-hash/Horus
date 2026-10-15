@@ -74,10 +74,10 @@ test('finish waits for an earlier commit AND a separately acknowledged buffered 
   assert.equal(new URL(socket.url).searchParams.get('commit_strategy'), 'manual');
   assert.equal(connection.diagnostics.connected, true);
   assert.equal(connection.diagnostics.last_event, 'session_started');
-  connection.send(audio(80001)); // Five seconds start the first manual commit.
+  connection.send(audio(48001)); // Three seconds start the first manual commit.
   connection.send(audio(16000)); // Audio captured while that commit is in flight is held locally.
   assert.equal(socket.sent.filter((packet) => packet.commit).length, 1);
-  assert.equal(connection.diagnostics.sent_ms, 5100);
+  assert.equal(connection.diagnostics.sent_ms, 3100);
   assert.equal(connection.diagnostics.buffered_ms, 1000);
   let finished = false;
   const finishing = connection.finish().then(() => { finished = true; });

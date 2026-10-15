@@ -66,7 +66,7 @@ async function runScenario(s) {
   const results = { understanding: [], questions: [] };
   for (const [i, text] of s.chunks.entries()) {
     const chunk = [{ segment_id: `s${i + 1}`, text }];
-    const patient_questions = questions.filter((q) => q.status === "unanswered").map(({ id, text, status }) => ({ id, text, status }));
+    const patient_questions = questions.filter((q) => q.status === "unanswered" || q.status === "asked").map(({ id, text, status }) => ({ id, text, status }));
     const u = await produce("understanding", "understanding.md", "understanding-evaluator.md",
       { prior_state: state, chunk, patient_questions }, { prior_state: state, chunk, patient_questions }, log);
     results.understanding.push(u);
@@ -95,8 +95,8 @@ async function runScenario(s) {
   results.questions.forEach((r, i) => {
     const newOnes = r.output.questions.filter((x) => String(x.id).startsWith("new-"));
     check(newOnes.length <= 3, `questions[${i}] added ${newOnes.length} new questions (max 3)`);
-    for (const x of r.output.questions.filter((q) => q.source === "ai"))
-      check(x.text.split(/\s+/).length <= 20, `question over 20 words: "${x.text}"`);
+    for (const x of newOnes)
+      check(x.text.trim().split(/\s+/).length <= 15, `new question over 15 words: "${x.text}"`);
   });
   // Required-content sections (important, next_steps, medications) may exceed 5 by design.
   for (const k of ["what_the_doctor_found"])

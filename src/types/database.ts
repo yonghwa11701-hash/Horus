@@ -122,7 +122,7 @@ export type Database = {
     Enums: {
       session_status: 'active' | 'paused' | 'ending' | 'completed' | 'discarding';
       suggestion_priority: 'low' | 'medium' | 'high' | 'critical';
-      suggestion_status: 'approved' | 'resolved' | 'dismissed';
+      suggestion_status: 'approved' | 'asked' | 'resolved' | 'dismissed';
       processing_status: 'pending' | 'processing' | 'completed' | 'failed';
       artifact_kind: 'transcript' | 'understanding' | 'questions' | 'evaluation' | 'resolution' | 'summary' | 'audit';
       transcript_source: 'elevenlabs' | 'manual_demo';

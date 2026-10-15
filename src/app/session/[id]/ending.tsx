@@ -7,9 +7,6 @@ import { Banner } from '@/components/ui';
 import { C } from '@/constants/theme';
 import { ConsultationApiError, finalizeConsultation, loadConsultation, subscribeToConsultation } from '@/lib/consultations';
 
-const TIMEOUT_MS = 60_000;
-const SLOW = 'This is taking longer than usual. Your transcript is saved.';
-
 function failureText(e: unknown) {
   // Browsers report an undeployed function as unreachable (failed CORS preflight), native as not deployed.
   if (e instanceof ConsultationApiError && (e.code === 'function_not_deployed' || e.code === 'service_unreachable')) {
@@ -27,11 +24,9 @@ export default function Ending() {
     let alive = true;
     let finished = false;
     let unsubscribe: (() => void) | undefined;
-    const timer = setTimeout(() => alive && !finished && setProblem(SLOW), TIMEOUT_MS);
     const done = () => {
       if (!alive || finished) return;
       finished = true;
-      clearTimeout(timer);
       router.replace(`/session/${id}/summary`);
     };
 
@@ -41,13 +36,13 @@ export default function Ending() {
       onStatus: (status) => {
         if (status === 'SUBSCRIBED') loadConsultation(id).then(({ session }) => session.status === 'completed' && done(), () => {});
       },
-    }).then((u) => (alive ? (unsubscribe = u) : u()), (e) => alive && setProblem(failureText(e)));
+    }).then((u) => (alive ? (unsubscribe = u) : u()), () => {});
+    // Live updates are optional: a connection failure does not mean finalization failed.
     // Successful finalization confirms completion even if its Realtime event is missed.
     finalizeConsultation(id).then(done, (e) => alive && !finished && setProblem(failureText(e)));
 
     return () => {
       alive = false;
-      clearTimeout(timer);
       unsubscribe?.();
     };
   }, [id, attempt]);
@@ -56,11 +51,11 @@ export default function Ending() {
     <SafeAreaView style={s.root}>
       <View style={s.body}>
         <Text style={s.h1} accessibilityRole="header">
-          Writing your summary
+          Preparing your summary
         </Text>
-        <Text style={s.sub}>This usually takes under a minute.</Text>
+        <Text style={s.sub}>This can take a few minutes. We’ll open it when it’s ready.</Text>
         <Step done label="Transcript saved" />
-        <Step label="Writing the summary and checking it against the transcript" />
+        <Step label="Finishing transcript checks and writing your summary" />
       </View>
       {problem && (
         <Banner
