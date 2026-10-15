@@ -19,9 +19,13 @@ async function invoke<Response>(name: string, body: Record<string, unknown>): Pr
   if (error) {
     if (error instanceof FunctionsHttpError) {
       const problem = await error.context.json().catch(() => null);
-      throw new ConsultationApiError(problem?.detail ?? 'The consultation request failed.', error.context.status, problem?.code);
+      if (error.context.status === 404 && problem?.code === 'NOT_FOUND') {
+        throw new ConsultationApiError(`Supabase Edge Function "${name}" is not deployed. Deploy the functions to the project configured in Horus/.env.`, 404, 'function_not_deployed');
+      }
+      throw new ConsultationApiError(problem?.detail ?? problem?.message ?? 'The consultation request failed.', error.context.status, problem?.code);
     }
-    throw new ConsultationApiError('Could not reach the consultation service. Check your connection.');
+    // Browsers also report failed preflights (including undeployed functions) as fetch failures.
+    throw new ConsultationApiError(`Could not reach Supabase function "${name}". Check Edge Function deployment, the browser ALLOWED_ORIGINS setting, and network access.`, undefined, 'service_unreachable');
   }
   if (!data) throw new ConsultationApiError('The consultation service returned an empty response.');
   return data;
