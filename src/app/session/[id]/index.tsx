@@ -2,7 +2,7 @@ import * as Haptics from 'expo-haptics';
 import { Redirect, router, useLocalSearchParams } from 'expo-router';
 import { usePreventRemove } from 'expo-router/react-navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AccessibilityInfo, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { AccessibilityInfo, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, Vibration, View } from 'react-native';
 import Animated, { FadeIn, FadeOut, LinearTransition } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -11,6 +11,7 @@ import { C } from '@/constants/theme';
 import { useConsultationVoice } from '@/hooks/use-consultation-voice';
 import { loadConsultation, subscribeToConsultation } from '@/lib/consultations';
 import { isConsultationId } from '@/lib/consultation-state';
+import { voiceDebug } from '@/lib/voice/debug';
 import type { Suggestion, TranscriptSegment } from '@/types/consultation';
 
 const RANK = { critical: 0, high: 1, medium: 2, low: 3 } as const;
@@ -172,12 +173,29 @@ function Live({ id }: { id: string }) {
   useEffect(() => {
     const appeared = active.some((q) => !seenQuestions.current.has(q.question_id));
     active.forEach((q) => seenQuestions.current.add(q.question_id));
-    if (!appeared || paused || ending) return;
+    if (!appeared) return;
+    const method = Platform.OS === 'android' ? 'vibration' : 'notification';
+    if (paused || ending) {
+      voiceDebug('haptic', { haptic_method: method, outcome: 'skipped', haptic_skip_reason: paused ? 'paused' : 'ending' });
+      return;
+    }
     // Every newly visible question, not only urgent ones. Replays/reordering must not buzz again.
-    const pulse = Platform.OS === 'android'
-      ? Haptics.performAndroidHapticsAsync(Haptics.AndroidHaptics.Confirm)
-      : Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    void pulse.catch(() => {}); // Unsupported/disabled haptics must never interrupt the consultation.
+    voiceDebug('haptic', { haptic_method: method, outcome: 'requested' });
+    if (Platform.OS === 'android') {
+      try {
+        // An alert vibration, not View touch feedback (which can silently do nothing).
+        // expo-haptics already supplies the normal Android VIBRATE permission.
+        Vibration.vibrate([0, 160, 80, 160], false);
+        voiceDebug('haptic', { haptic_method: method, outcome: 'queued' });
+      } catch {
+        voiceDebug('haptic', { haptic_method: method, outcome: 'failure' });
+      }
+      return;
+    }
+    void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).then(
+      () => voiceDebug('haptic', { haptic_method: method, outcome: 'success' }),
+      () => voiceDebug('haptic', { haptic_method: method, outcome: 'failure' }),
+    );
   }, [active, paused, ending]);
   const mm = String(Math.floor(elapsed / 60)).padStart(2, '0');
   const ss = String(elapsed % 60).padStart(2, '0');
