@@ -98,8 +98,7 @@ export async function discardSession(body: { session_id: string }, ctx: RequestC
   if (error) databaseError(error);
   const admin = adminClient();
   await removeSessionFiles(admin, session);
-  const { error: deleteError } = await admin.from('sessions').delete()
-    .eq('id', session.id).eq('user_id', ctx.userId).eq('status', 'discarding');
+  const { error: deleteError } = await admin.rpc('delete_discarded_consultation', { p_session_id: session.id });
   if (deleteError) databaseError(deleteError);
   // Cascades remove transcripts, questions, artifacts metadata and session audit data.
   return { discarded: true };

@@ -12,6 +12,11 @@ type Table<Row, Required extends keyof Row> = {
 export type Database = {
   public: {
     Tables: {
+      scribe_token_reservations: Table<{
+        id: string;
+        user_id: string;
+        reserved_at: string;
+      }, 'user_id'>;
       sessions: Table<{
         id: string;
         user_id: string;
@@ -81,6 +86,10 @@ export type Database = {
           p_source: Database['public']['Enums']['transcript_source'];
         };
         Returns: Database['public']['Tables']['transcript_segments']['Row'][];
+      };
+      delete_discarded_consultation: {
+        Args: { p_session_id: string };
+        Returns: undefined;
       };
       reserve_scribe_token: {
         Args: { p_session_id: string };
