@@ -1,7 +1,7 @@
 import * as Haptics from 'expo-haptics';
 import { Redirect, router, useLocalSearchParams } from 'expo-router';
 import { usePreventRemove } from 'expo-router/react-navigation';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { AccessibilityInfo, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeIn, FadeOut, LinearTransition } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -48,7 +48,19 @@ export default function LiveRoute() {
 
 function Live({ id }: { id: string }) {
   const [error, setError] = useState<string | null>(null);
-  const voice = useConsultationVoice({ sessionId: id, onError: (e) => setError(e.message) });
+  const [segments, setSegments] = useState<Map<string, TranscriptSegment>>(new Map());
+  const addSegments = useCallback((incoming: TranscriptSegment[]) => {
+    setSegments((current) => {
+      const next = new Map(current);
+      incoming.forEach((segment) => next.set(segment.id, segment));
+      return next;
+    });
+  }, []);
+  const voice = useConsultationVoice({
+    sessionId: id, onError: (e) => setError(e.message),
+    // A durable save acknowledgement updates the UI even if Realtime is delayed.
+    onSegment: (segment) => addSegments([segment]),
+  });
   const [rows, setRows] = useState<Rows>(new Map());
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
   const [answered, setAnswered] = useState<Suggestion[]>([]);
@@ -56,7 +68,6 @@ function Live({ id }: { id: string }) {
   const [paused, setPaused] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [ending, setEnding] = useState(false);
-  const [segments, setSegments] = useState<Map<string, TranscriptSegment>>(new Map());
   const [showTranscript, setShowTranscript] = useState(false);
   const rowsRef = useRef<Rows>(rows);
   const dismissedRef = useRef(dismissed);
@@ -116,18 +127,11 @@ function Live({ id }: { id: string }) {
       setRows(next);
     }
 
-    const addSegments = (rows: TranscriptSegment[]) =>
-      setSegments((m) => {
-        const next = new Map(m);
-        rows.forEach((seg) => next.set(seg.id, seg));
-        return next;
-      });
-
     let unsubscribe: (() => void) | undefined;
     let alive = true;
     subscribeToConsultation(id, {
-      onSuggestion: (q) => apply([q]),
-      onTranscript: (seg) => addSegments([seg]),
+      onSuggestion: (q) => { if (alive) apply([q]); },
+      onTranscript: (seg) => { if (alive) addSegments([seg]); },
       // Reload on every (re)subscribe so rows missed while disconnected are not lost.
       onStatus: (status) => {
         if (status === 'SUBSCRIBED') loadConsultation(id).then(({ suggestions, segments }) => {
@@ -144,7 +148,7 @@ function Live({ id }: { id: string }) {
       alive = false;
       unsubscribe?.();
     };
-  }, [id]);
+  }, [id, addSegments]);
 
   async function pause() {
     try {
@@ -254,6 +258,7 @@ function Live({ id }: { id: string }) {
         visible={showTranscript}
         segments={[...segments.values()].sort((a, b) => a.sequence - b.sequence)}
         partial={voice.partialTranscript}
+        pendingCount={voice.pendingCount}
         status={statusLabel}
         onClose={() => setShowTranscript(false)}
       />
@@ -263,8 +268,8 @@ function Live({ id }: { id: string }) {
 
 const clock = (ms: number) => `${String(Math.floor(ms / 60000)).padStart(2, '0')}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
 
-function LiveTranscript({ visible, segments, partial, status, onClose }: {
-  visible: boolean; segments: TranscriptSegment[]; partial: string; status: string; onClose: () => void;
+function LiveTranscript({ visible, segments, partial, pendingCount, status, onClose }: {
+  visible: boolean; segments: TranscriptSegment[]; partial: string; pendingCount: number; status: string; onClose: () => void;
 }) {
   const scroll = useRef<ScrollView>(null);
   return (
@@ -274,10 +279,11 @@ function LiveTranscript({ visible, segments, partial, status, onClose }: {
           <Text style={s.tsTitle} accessibilityRole="header">
             Transcript
           </Text>
-          <Text style={s.time}>{status} · newest at the bottom</Text>
+          <Text style={s.time}>{status} · {segments.length} saved · newest at the bottom</Text>
         </View>
         <ScrollView ref={scroll} onContentSizeChange={() => scroll.current?.scrollToEnd({ animated: false })} contentContainerStyle={s.tsBody}>
-          {segments.length === 0 && !partial && <Text style={s.empty}>Nothing heard yet.</Text>}
+          {segments.length === 0 && !partial && !pendingCount && <Text style={s.empty}>Nothing heard yet.</Text>}
+          {pendingCount > 0 && <Text style={s.empty}>Saving transcript…</Text>}
           {segments.map((seg) => (
             <View key={seg.id}>
               <Text style={s.segTime}>{clock(seg.start_ms)}</Text>
@@ -285,9 +291,12 @@ function LiveTranscript({ visible, segments, partial, status, onClose }: {
             </View>
           ))}
           {!!partial && (
-            <Text style={s.partial} accessibilityLiveRegion="polite">
-              {partial}…
-            </Text>
+            <View>
+              <Text style={s.segTime}>Live · not saved yet</Text>
+              <Text style={s.partial} accessibilityLiveRegion="polite">
+                {partial}…
+              </Text>
+            </View>
           )}
         </ScrollView>
         <View style={s.foot}>
