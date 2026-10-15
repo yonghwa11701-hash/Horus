@@ -1,0 +1,12 @@
+{
+  "events": ["start", "audio", "scribe", "save", "error", "stop", "discard", "acknowledge", "state", "request"],
+  "numbers": ["captured_ms", "level_percent", "max_level_percent", "sample_rate", "sent_ms", "buffered_ms", "commit_requests", "commit_confirmations", "partial_events", "final_events", "text_chars", "sequence", "status", "duration_ms", "pcm_peak_percent"],
+  "booleans": ["connected"],
+  "strings": {
+    "platform": ["web", "android", "ios", "windows", "macos"],
+    "phase": ["idle", "starting", "recording", "stopping", "error"],
+    "stage": ["microphone", "scribe", "transcript", "session", "voice"],
+    "function_name": ["create-session", "get-scribe-token", "append-transcript", "update-session", "discard-session", "process-segment", "finalize-session"],
+    "outcome": ["requested", "success", "failure", "queued", "closed", "pending"]
+  }
+}

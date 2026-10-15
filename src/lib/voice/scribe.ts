@@ -11,15 +11,17 @@ export type ScribeDiagnostics = {
   partial_events: number;
   final_events: number;
   last_event: string;
+  pcm_peak_percent: number;
 };
 export const EMPTY_SCRIBE_DIAGNOSTICS: ScribeDiagnostics = {
   connected: false, sent_ms: 0, buffered_ms: 0, commit_requests: 0,
-  commit_confirmations: 0, partial_events: 0, final_events: 0, last_event: 'not_connected',
+  commit_confirmations: 0, partial_events: 0, final_events: 0, last_event: 'not_connected', pcm_peak_percent: 0,
 };
 type Callbacks = {
   onPartial: (text: string) => void;
   onFinal: (segment: ScribeFinal) => void;
   onError: (error: Error) => void;
+  onEvent?: (diagnostics: ScribeDiagnostics, textCharacters: number) => void;
 };
 type PendingCommit = {
   boundary: number;
@@ -52,6 +54,7 @@ export class ScribeConnection {
   private partialEvents = 0;
   private finalEvents = 0;
   private lastEvent = 'not_connected';
+  private pcmPeak = 0;
 
   constructor(callbacks: Callbacks, offsetMs: number) {
     this.callbacks = callbacks;
@@ -65,6 +68,7 @@ export class ScribeConnection {
       connected: this.ready, sent_ms: Math.round(this.sentSamples / 16), buffered_ms: this.closing ? 0 : Math.round(this.queuedBytes / 32),
       commit_requests: this.commitRequests, commit_confirmations: this.commitConfirmations,
       partial_events: this.partialEvents, final_events: this.finalEvents, last_event: this.lastEvent,
+      pcm_peak_percent: Math.round(this.pcmPeak * 10000) / 100,
     };
   }
 
@@ -109,7 +113,9 @@ export class ScribeConnection {
         } else if ('error' in message || String(message.message_type).endsWith('_error')) {
           this.fail(new Error(`Transcription provider returned ${eventType}. Check ElevenLabs permissions, connectivity and provider quota.`));
         }
-        // Plain committed_transcript is paired with the timestamped event; ignore it.
+        // Plain committed_transcript is paired with the timestamped event; ignore it for persistence.
+        // Report counts/lengths only, never the message body or its transcript text.
+        this.callbacks.onEvent?.(this.diagnostics, typeof message.text === 'string' ? message.text.trim().length : 0);
       };
       socket.onerror = () => this.fail(new Error('Could not connect to the transcription service.'));
       socket.onclose = () => {
@@ -151,6 +157,10 @@ export class ScribeConnection {
     this.socket.send(JSON.stringify({
       message_type: 'input_audio_chunk', audio_base_64: fromByteArray(bytes), commit, sample_rate: 16000,
     }));
+    const pcm = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    for (let offset = 0; offset < bytes.length; offset += 2) {
+      this.pcmPeak = Math.max(this.pcmPeak, Math.abs(pcm.getInt16(offset, true)) / 32768);
+    }
   }
 
   private requestCommit(): Promise<void> {

@@ -2,7 +2,7 @@
 // No network, Expo runtime, or provider credentials are used.
 import assert from 'node:assert/strict';
 import { test, type TestContext } from 'node:test';
-import { ScribeConnection, type ScribeFinal } from '../src/lib/voice/scribe.ts';
+import { ScribeConnection, type ScribeDiagnostics, type ScribeFinal } from '../src/lib/voice/scribe.ts';
 import { replayConsultationEvents } from '../src/lib/consultation-state.ts';
 import type { Session, Suggestion, TranscriptSegment } from '../src/types/consultation.ts';
 
@@ -24,14 +24,16 @@ async function connect(t: TestContext) {
   t.mock.method(globalThis, 'WebSocket', FakeSocket as unknown as typeof WebSocket);
   const finals: ScribeFinal[] = [];
   const errors: Error[] = [];
+  const events: { metrics: ScribeDiagnostics; text_chars: number }[] = [];
   const connection = new ScribeConnection({
     onPartial: () => {}, onFinal: (row) => finals.push(row), onError: (error) => errors.push(error),
+    onEvent: (metrics, text_chars) => events.push({ metrics, text_chars }),
   }, 0);
   const starting = connection.connect('synthetic-single-use-token');
   const socket = FakeSocket.instances.at(-1)!;
   socket.emit({ message_type: 'session_started' });
   await starting;
-  return { connection, socket, finals, errors };
+  return { connection, socket, finals, errors, events };
 }
 function audio(frames: number) {
   return { data: new Float32Array(frames).buffer, sampleRate: 16000, channels: 1, encoding: 'float32' as const };
@@ -75,6 +77,17 @@ test('provider error code is visible without exposing provider error body', asyn
   assert.doesNotMatch(errors[0].message, /sensitive request/);
   assert.equal(connection.diagnostics.last_event, 'quota_exceeded');
   assert.equal(connection.diagnostics.connected, false);
+});
+
+test('event diagnostics retain input strength and character counts without transcript content', async (t) => {
+  const { connection, socket, events } = await connect(t);
+  connection.send({ ...audio(16001), data: new Float32Array(16001).fill(0.25).buffer });
+  socket.emit({ message_type: 'partial_transcript', text: 'Synthetic private words' });
+  assert.equal(connection.diagnostics.pcm_peak_percent, 25);
+  assert.equal(events.at(-1)?.text_chars, 'Synthetic private words'.length);
+  assert.doesNotMatch(JSON.stringify(events), /Synthetic private words/);
+  connection.close();
+  assert.equal(connection.diagnostics.pcm_peak_percent, 25, 'Signal peak remains visible after stopping');
 });
 
 test('missing confirmation fails even without a partial; repeated finish cannot bypass the failure', async (t) => {

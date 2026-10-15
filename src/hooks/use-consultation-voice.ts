@@ -5,6 +5,7 @@ import {
   appendFinalTranscript, discardConsultation, getScribeToken, loadTranscriptCursor, setSessionStatus,
 } from '@/lib/consultations';
 import { EMPTY_SCRIBE_DIAGNOSTICS, ScribeConnection } from '@/lib/voice/scribe';
+import { voiceDebug } from '@/lib/voice/debug';
 import type { MicrophoneBuffer } from '@/lib/voice/pcm';
 import type { FinalTranscriptInput, TranscriptSegment } from '@/types/consultation';
 import { useMicrophone } from './use-microphone';
@@ -34,19 +35,27 @@ export function useConsultationVoice(options: Options) {
   const generation = useRef(0);
   const stopMicrophone = useRef<() => void>(() => {});
   const diagnosticSource = useRef<ScribeConnection | null>(null);
-  const microphoneStats = useRef({ captured_ms: 0, level: 0, sample_rate: 0, last_buffer: 0 });
+  const lastDebugAt = useRef(0);
+  const microphoneStats = useRef({ captured_ms: 0, level: 0, max_level: 0, sample_rate: 0, last_buffer: 0 });
   const [diagnostics, setDiagnostics] = useState({
-    ...EMPTY_SCRIBE_DIAGNOSTICS, captured_ms: 0, level_percent: 0, sample_rate: 0,
+    ...EMPTY_SCRIBE_DIAGNOSTICS, captured_ms: 0, level_percent: 0, max_level_percent: 0, sample_rate: 0,
   });
 
   useEffect(() => {
+    voiceDebug('state', { phase });
     const update = () => {
       const mic = microphoneStats.current;
-      setDiagnostics({
+      const snapshot = {
         ...(diagnosticSource.current?.diagnostics ?? EMPTY_SCRIBE_DIAGNOSTICS),
         captured_ms: Math.round(mic.captured_ms), sample_rate: mic.sample_rate,
-        level_percent: Date.now() - mic.last_buffer < 1000 ? Math.round(mic.level * 100) : 0,
-      });
+        level_percent: Date.now() - mic.last_buffer < 1000 ? Math.round(mic.level * 10000) / 100 : 0,
+        max_level_percent: Math.round(mic.max_level * 10000) / 100,
+      };
+      setDiagnostics(snapshot);
+      if (phase !== 'idle' && Date.now() - lastDebugAt.current >= 1000) {
+        lastDebugAt.current = Date.now();
+        voiceDebug('audio', { ...snapshot, phase });
+      }
     };
     update();
     if (phase !== 'starting' && phase !== 'recording' && phase !== 'stopping') return;
@@ -61,6 +70,7 @@ export function useConsultationVoice(options: Options) {
 
   const reportError = useCallback((value: unknown) => {
     const error = value instanceof Error ? value : new Error('Voice capture failed.');
+    voiceDebug('error', { stage: 'voice', outcome: 'failure', ...(diagnosticSource.current?.diagnostics ?? {}) });
     if (connection.current?.hasUnconfirmedAudio) markUnconfirmed();
     stopMicrophone.current();
     connection.current?.close();
@@ -84,6 +94,7 @@ export function useConsultationVoice(options: Options) {
       const mic = microphoneStats.current;
       mic.captured_ms += samples / buffer.channels / buffer.sampleRate * 1000;
       mic.level = Math.min(1, peak);
+      mic.max_level = Math.max(mic.max_level, mic.level);
       mic.sample_rate = buffer.sampleRate;
       mic.last_buffer = Date.now();
       connection.current?.send(buffer);
@@ -102,7 +113,10 @@ export function useConsultationVoice(options: Options) {
     draining.current = (async () => {
       while (queue.current.length) {
         // Shift only after acknowledgement. Retry uses the SAME id and sequence.
-        const { segment } = await appendFinalTranscript(queue.current[0]);
+        const pending = queue.current[0];
+        voiceDebug('save', { stage: 'transcript', outcome: 'requested', sequence: pending.sequence, text_chars: pending.text.length });
+        const { segment } = await appendFinalTranscript(pending);
+        voiceDebug('save', { stage: 'transcript', outcome: 'success', sequence: segment.sequence, text_chars: segment.text.length });
         queue.current.shift();
         setPendingCount(queue.current.length);
         callbacks.current.onSegment?.(segment);
@@ -117,13 +131,15 @@ export function useConsultationVoice(options: Options) {
     busy.current = true;
     const version = generation.current;
     setPhase('starting');
-    microphoneStats.current = { captured_ms: 0, level: 0, sample_rate: 0, last_buffer: 0 };
+    voiceDebug('start', { stage: 'voice', outcome: 'requested' });
+    microphoneStats.current = { captured_ms: 0, level: 0, max_level: 0, sample_rate: 0, last_buffer: 0 };
     diagnosticSource.current = null;
     try {
       // Invoke capture inside the click, before ANY await/network work. Otherwise
       // browser autoplay policy can leave AudioContext.resume() waiting indefinitely.
       // Do not speak until recording: buffers are ignored while Scribe is connecting.
       await microphone.start();
+      voiceDebug('start', { stage: 'microphone', outcome: 'success' });
       if (version !== generation.current) throw new Error('Voice start cancelled.');
       await flush();
       await setSessionStatus(options.sessionId, 'active');
@@ -140,6 +156,7 @@ export function useConsultationVoice(options: Options) {
           void flush().catch(reportError);
         },
         onError: reportError,
+        onEvent: (metrics, textCharacters) => voiceDebug('scribe', { ...metrics, text_chars: textCharacters }),
       }, cursor.offsetMs);
       connection.current = scribe;
       diagnosticSource.current = scribe;
@@ -160,6 +177,7 @@ export function useConsultationVoice(options: Options) {
     if (busy.current) throw new Error('Wait for the current voice operation to finish.');
     busy.current = true;
     setPhase('stopping');
+    voiceDebug('stop', { stage: 'voice', outcome: 'requested' });
     microphone.stop();
     try {
       if (connection.current) {
@@ -196,6 +214,7 @@ export function useConsultationVoice(options: Options) {
     try {
       await draining.current?.catch(() => {});
       await discardConsultation(options.sessionId);
+      voiceDebug('discard', { outcome: 'success' });
       setPendingCount(0);
       unconfirmed.current = false;
       setUnconfirmedAudio(false);
@@ -229,6 +248,7 @@ export function useConsultationVoice(options: Options) {
   const acknowledgeUnconfirmedAudio = useCallback(() => {
     if (busy.current || connection.current) throw new Error('Stop voice capture before acknowledging missing audio.');
     // Explicit user decision, never an automatic recovery or a side effect of retrying End.
+    voiceDebug('acknowledge', { stage: 'voice', outcome: 'success' });
     unconfirmed.current = false;
     setUnconfirmedAudio(false);
     setPartialTranscript('');

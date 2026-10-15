@@ -122,9 +122,10 @@ function SessionDebug({ initialSession, onDiscard }: { initialSession: Session; 
     {error ? <ThemedText style={styles.error}>{error}</ThemedText> : null}
     {notice ? <ThemedText>{notice}</ThemedText> : null}
     <ThemedText type="code">
-      Mic captured: {(voice.diagnostics.captured_ms / 1000).toFixed(1)}s · Peak: {voice.diagnostics.level_percent}% · {voice.diagnostics.sample_rate} Hz{'\n'}
+      Mic captured: {(voice.diagnostics.captured_ms / 1000).toFixed(1)}s · Peak now: {voice.diagnostics.level_percent}% · Max: {voice.diagnostics.max_level_percent}% · {voice.diagnostics.sample_rate} Hz{'\n'}
       Scribe connected: {voice.diagnostics.connected ? 'yes' : 'no'} · Sent: {(voice.diagnostics.sent_ms / 1000).toFixed(1)}s · Buffered: {(voice.diagnostics.buffered_ms / 1000).toFixed(1)}s{'\n'}
       Commits: {voice.diagnostics.commit_confirmations}/{voice.diagnostics.commit_requests} · Partials: {voice.diagnostics.partial_events} · Finals: {voice.diagnostics.final_events}{'\n'}
+      PCM peak max sent: {voice.diagnostics.pcm_peak_percent}%{'\n'}
       Last Scribe event: {voice.diagnostics.last_event}
     </ThemedText>
     <ThemedText type="small">Wait for Voice: recording before speaking. Say a sentence, wait 5–10 seconds, then Pause to save the final words. Sent duration includes flush silence.</ThemedText>
@@ -135,6 +136,7 @@ function SessionDebug({ initialSession, onDiscard }: { initialSession: Session; 
     <ThemedText selectable>{voice.partialTranscript || 'No live words received yet.'}</ThemedText>
     <ThemedText type="smallBold">Final transcript ({segments.length})</ThemedText>
     {!segments.length ? <ThemedText>No confirmed transcript saved yet. The counters above show whether audio is reaching Scribe.</ThemedText> : null}
+    {!segments.length && !voice.pendingCount && voice.diagnostics.final_events > 0 ? <ThemedText style={styles.error}>Commits were acknowledged but no non-empty transcript was saved. Check Mic Max / PCM peak and the terminal's Scribe text_chars entries. Peaks near zero indicate silent or very quiet input.</ThemedText> : null}
     {segments.slice(-20).map((segment) => <ThemedText key={segment.id} selectable>
       #{segment.sequence} [{segment.start_ms}–{segment.end_ms} ms] ({segment.processing_status}) {segment.text}
     </ThemedText>)}
