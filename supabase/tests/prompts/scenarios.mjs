@@ -4,6 +4,43 @@ const pq = (id, text) => ({ id, text, source: "patient", status: "unanswered", p
 
 export const scenarios = [
   {
+    name: "asked-without-answer",
+    description: "patient paraphrases a visible question; hide it as asked, not answered",
+    questions: [{ ...pq("q1", "When should I get the results?"), source: "ai" }],
+    chunks: ["Patient: When will my results be ready?\nDoctor: Let's finish going through your notes."],
+    expect: ({ state, questions, summary, check }) => {
+      check(state.asked_questions?.some((q) => q.id === "q1"), "patient's paraphrased question was not detected");
+      check(questions.find((q) => q.id === "q1")?.status === "asked", "q1 must be asked, not answered or unanswered");
+      check(!state.answered_questions?.some((q) => q.id === "q1"), "asking alone must not imply a doctor's answer");
+      check(summary.still_to_ask.includes("When should I get the results?"), "asked-but-unanswered q1 missing from follow-up");
+    },
+  },
+  {
+    name: "doctor-mention-is-not-asked",
+    description: "a doctor's quoted suggestion and patient acknowledgment do not mean the patient asked it",
+    questions: [{ ...pq("q1", "When should I get the results?"), source: "ai" }],
+    chunks: ["Doctor: You can ask, 'When should I get the results?', when we finish.\nPatient: Okay."],
+    expect: ({ state, questions, check }) => {
+      check(!state.asked_questions?.some((q) => q.id === "q1"), "doctor's invitation was mistaken for a patient question");
+      check(questions.find((q) => q.id === "q1")?.status === "unanswered", "unasked q1 must remain visible");
+    },
+  },
+  {
+    name: "asked-then-answered",
+    description: "a later doctor answer resolves a previously asked question",
+    questions: [{ ...pq("q1", "When should I get the results?"), source: "ai" }],
+    chunks: [
+      "Patient: When will my results be ready?\nDoctor: Let me check the schedule.",
+      "Doctor: Your results will be ready on Friday.",
+    ],
+    expect: ({ state, questions, summary, check }) => {
+      check(state.asked_questions?.some((q) => q.id === "q1"), "lost the earlier asked record");
+      check(questions.find((q) => q.id === "q1")?.status === "answered", "later doctor answer did not resolve q1");
+      check(!summary.still_to_ask.includes("When should I get the results?"), "answered q1 still outstanding");
+      check(summary.answered_questions.some((q) => q.question === "When should I get the results?"), "answered q1 missing from summary");
+    },
+  },
+  {
     name: "clear-labelled",
     description: "labelled speakers, clear antibiotic dose and follow-up, one patient question answered",
     questions: [pq("q1", "How long do I take the antibiotic for?")],

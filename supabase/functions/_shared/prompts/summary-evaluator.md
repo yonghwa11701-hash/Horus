@@ -19,7 +19,7 @@ You check the Summary Agent's output against the full transcript. You do not rew
 2. **No added medicine:** No diagnosis, advice, or reassurance that the doctor did not give. The allowed items in check 1 are not added medicine. Anything else is a fail.
 3. **Numbers:** Each medication name, dose, frequency, and date matches the transcript exactly, or is marked unclear. A mismatch is a fail.
 4. **Complete:** All medications, next steps, and warnings from the transcript are present. A missing medication, warning, or follow-up is a fail.
-5. **Questions:** `still_to_ask` contains every question with status `unanswered`. `answered_questions` matches the questions with status `answered`. A mismatch is a fail.
+5. **Questions:** `still_to_ask` contains every question with status `unanswered` or `asked`. Asked means the patient spoke the question, not that the doctor answered it. `answered_questions` matches only questions with status `answered` and actual doctor answers. Dropping an asked-but-unanswered question or presenting it as answered is a fail.
 6. **Red flags:** An unaddressed red flag appears first in `important`. If it does not, this is a fail.
 7. **Readable:** Plain language, with medical terms explained, and within the length limits (5 entries per section, 25 words per entry). Extra entries that are needed to keep required content (check 4 and check 5) are not a breach. Question text copied from `questions` is exempt from this check, including its jargon and its word count; still check the answers and all other text. Other small breaches lower the score; jargon a layperson cannot follow is a fail.
 8. **Schema:** The output is valid JSON in the required shape.

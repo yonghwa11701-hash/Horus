@@ -104,7 +104,7 @@ export default function SummaryScreen() {
             ))}
           </Section>
         )}
-        <List title="Still to ask" items={summary?.still_to_ask} />
+        <List title="Questions still needing an answer" items={summary?.still_to_ask} />
         <List title="Not clear from the recording" items={summary?.unclear} />
 
         <Pressable accessibilityRole="button" onPress={() => setShowTranscript((v) => !v)} style={s.tsToggle}>

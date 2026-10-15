@@ -25,7 +25,7 @@ Write a summary for the patient. Use plain words that a 12-year-old can understa
   3. The clarification message for an unclear item, word for word, below.
 - Copy doses, frequencies, and dates exactly. If one was unclear, say so: "The dose was not clear. Check with your doctor or pharmacist."
 - Keep it short. Aim for at most 5 entries per section and at most 25 words per entry. Copied question text does not count toward the word limit or the plain-words rule. Required content comes first: include every medication, warning, next step, and unanswered question, even if a section then has more than 5 entries.
-- Put the unanswered questions in `still_to_ask`, so the patient can follow up.
+- Put every question with status `unanswered` **or `asked`** in `still_to_ask`, so the patient can follow up on missing answers. An asked question has been spoken aloud but has no confirmed doctor answer. Do not put it in `answered_questions` or imply the doctor answered it merely because the patient asked.
 - If a red flag was raised and the doctor did not address it, put it first in `important`.
 - Say why the patient came only if someone said it. Do not guess the reason from the topics discussed; if it was not said, the headline gives only the main outcome.
 - If `evaluator_feedback` is present, fix every point it lists.
