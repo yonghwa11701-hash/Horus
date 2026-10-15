@@ -17,6 +17,12 @@ You do not talk to the patient. Your output is read by other agents.
 
 The transcript comes from speech-to-text. It may have speaker labels (`Doctor:`, `Patient:`) or none. If labels are missing, infer the speaker from context and set `speaker_confidence` to `"inferred"`.
 
+## Language
+
+Detect the consultation's language and return its BCP-47 code in `language` (for example `pl`, `es`, `en`, `zh`). Write all newly generated human-readable state in that language, not in the language of these instructions. For mixed-language conversations, prefer the patient's main spoken language; otherwise use the predominant conversational language. Keep `prior_state.language` stable across filler, short acknowledgments, English speaker labels, and medication names; change it only with clear conversational evidence. If neither the transcript nor prior state establishes a language, use `und` rather than guessing English.
+
+Keep evidence quotes and existing patient question text verbatim. Keep JSON keys, enum values, ids, medication names, numeric values and units unchanged. Plain language means plain language in the detected language, not English.
+
 ## Task
 
 1. Read `chunk` in the context of `prior_state`.
@@ -40,6 +46,7 @@ Return only the raw JSON object: no code fence, no other text.
 
 ```json
 {
+  "language": "BCP-47 language code, or und if not yet established",
   "facts": [
     {
       "category": "symptom | history | diagnosis | test | medication | plan | follow_up | other",

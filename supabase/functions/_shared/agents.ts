@@ -33,6 +33,7 @@ const evaluation = z.object({
 });
 type Evaluation = z.infer<typeof evaluation>;
 const understandingOutput = z.looseObject({
+  language: z.string().min(1).optional(), // Additive hint; older stored states have no language field.
   facts: z.array(z.unknown()),
   answered_questions: z.array(z.looseObject({ id: z.string() })),
   asked_questions: z.array(z.object({ id: z.string(), evidence: z.string(), segment_ids: z.array(z.string()).min(1) })).default([]),
@@ -75,14 +76,21 @@ async function produce<T>(
   const attempts: { output: T; verdict: Evaluation }[] = [];
   let feedback: string | null = null;
   for (let i = 1; i <= MAX_RETRIES + 1; i++) {
-    const output: T = await callAgent(producer, model, { ...input, evaluator_feedback: feedback }, schema, signal);
+    const producerStart = Date.now();
+    // Faster live producers; keep the independent Sonnet judges and summary at medium effort.
+    const output: T = await callAgent(producer, model, { ...input, evaluator_feedback: feedback }, schema, signal,
+      agent === 'summary' ? 'medium' : 'low');
+    const producerMs = Date.now() - producerStart;
+    const reviewStart = Date.now();
     const verdict: Evaluation = await callAgent(evaluator, REVIEW_MODEL, { ...evalInput, output }, evaluation, signal);
+    const reviewMs = Date.now() - reviewStart;
     attempts.push({ output, verdict });
     const artifact = await saveJsonArtifact(admin, session, 'evaluation', {
       agent, attempt: i, ...context, output: output as Json, evaluation: verdict as Json,
     });
     await recordSystemEvent(admin, session.id, `agent.${agent}.evaluated`, {
       attempt: i, pass: verdict.pass, score: verdict.score,
+      producer_ms: producerMs, review_ms: reviewMs,
       failed_checks: verdict.issues.flatMap((issue) => (issue.check ? [issue.check] : [])),
     }, artifact.id);
     if (verdict.pass) return { output, verdict, attempts: i, flagged: false };
