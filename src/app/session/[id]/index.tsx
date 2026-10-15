@@ -16,6 +16,7 @@ const RANK = { critical: 0, high: 1, medium: 2, low: 3 } as const;
 const MAX_CARDS = 3; // CLAUDE.md §3
 const SHOW_ANSWERED_MS = 3000;
 const MOVED_UP_MS = 3000;
+const FOLLOW_SLACK_PX = 48;
 
 type Rows = Map<string, Suggestion>;
 
@@ -256,6 +257,7 @@ function LiveTranscript({ visible, segments, partial, status, onClose }: {
   visible: boolean; segments: TranscriptSegment[]; partial: string; status: string; onClose: () => void;
 }) {
   const scroll = useRef<ScrollView>(null);
+  const followingLatest = useRef(true);
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
       <SafeAreaView style={s.root}>
@@ -265,7 +267,14 @@ function LiveTranscript({ visible, segments, partial, status, onClose }: {
           </Text>
           <Text style={s.time}>{status} · newest at the bottom</Text>
         </View>
-        <ScrollView ref={scroll} onContentSizeChange={() => scroll.current?.scrollToEnd({ animated: false })} contentContainerStyle={s.tsBody}>
+        <ScrollView
+          ref={scroll}
+          scrollEventThrottle={100}
+          onScroll={({ nativeEvent: { contentOffset, contentSize, layoutMeasurement } }) => {
+            followingLatest.current = contentSize.height - (contentOffset.y + layoutMeasurement.height) < FOLLOW_SLACK_PX;
+          }}
+          onContentSizeChange={() => followingLatest.current && scroll.current?.scrollToEnd({ animated: false })}
+          contentContainerStyle={s.tsBody}>
           {segments.length === 0 && !partial && <Text style={s.empty}>Nothing heard yet.</Text>}
           {segments.map((seg) => (
             <View key={seg.id}>
