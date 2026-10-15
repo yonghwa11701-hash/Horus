@@ -63,3 +63,18 @@ export const Spacing = {
 
 export const BottomTabInset = Platform.select({ ios: 50, android: 80 }) ?? 0;
 export const MaxContentWidth = 800;
+
+/** "Clinical Clear" — light only. Contrast ratios in docs/superpowers/specs/2026-10-15-horus-ui-design.md. */
+export const C = {
+  bg: '#FFFFFF',
+  ink: '#0B1220',
+  muted: '#4A5568',
+  surface: '#F4F6F8',
+  line: '#D5DBE3',
+  primary: '#0A58CA',
+  primaryTint: '#E8F0FE',
+  chip: '#E7EBF0',
+  ok: '#1E6B3A',
+  danger: '#B42318',
+  rec: '#E5484D',
+} as const;
