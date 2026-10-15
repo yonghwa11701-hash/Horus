@@ -2,12 +2,15 @@ import { randomUUID } from 'expo-crypto';
 import { router } from 'expo-router';
 import { usePreventRemove } from 'expo-router/react-navigation';
 import { useEffect, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Btn } from '@/components/ui';
 import { C } from '@/constants/theme';
 import { createConsultation } from '@/lib/consultations';
+
+// Browsers only allow the mic from a tap on the Live screen, so on web this button just continues.
+const START_LABEL = Platform.OS === 'web' ? 'Continue' : '● Start listening';
 
 // Shown before every consultation: each appointment may be a different doctor (CLAUDE.md §2).
 export default function Consent() {
@@ -61,8 +64,8 @@ export default function Consent() {
       <View style={s.foot}>
         {error && <Text style={s.err}>{error}</Text>}
         <Btn
-          label={pending ? 'Starting…' : '● Start listening'}
-          accessibilityLabel="Start listening"
+          label={pending ? 'Starting…' : START_LABEL}
+          accessibilityLabel={START_LABEL.replace('● ', '')}
           variant="primary"
           disabled={!agreed || pending}
           onPress={start}

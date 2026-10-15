@@ -79,6 +79,8 @@ function Live({ id }: { id: string }) {
 
   const busy = voice.phase === 'starting' || voice.phase === 'stopping';
   const live = voice.phase === 'recording';
+  // Web never auto-starts (mic needs a tap), so until the first start the patient must be told plainly.
+  const notStarted = Platform.OS === 'web' && voice.phase === 'idle' && !paused && !ending;
 
   function listen() {
     setError(null);
@@ -192,14 +194,14 @@ function Live({ id }: { id: string }) {
             {mm}:{ss}
           </Text>
         </View>
-        <Btn
+        {!notStarted && <Btn
           label={live ? '❚❚ Pause' : paused ? '▶ Resume' : '▶ Start'}
           accessibilityLabel={live ? 'Pause listening' : paused ? 'Resume listening' : 'Start microphone'}
           variant={live ? 'outline' : 'primary'}
           disabled={busy || ending || voice.unconfirmedAudio}
           onPress={live ? pause : listen}
           style={{ minHeight: 48, paddingHorizontal: 14 }}
-        />
+        />}
       </View>
 
       {paused && !live && <Banner text="Horus isn’t listening. Nothing is being recorded." />}
@@ -223,7 +225,14 @@ function Live({ id }: { id: string }) {
             <Text style={s.link}>Transcript ›</Text>
           </Pressable>
         </View>
-        {active.length === 0 && answered.length === 0 && <Text style={s.empty}>{live ? 'Listening… questions will appear here.' : busy ? 'Connecting microphone…' : 'Start listening to see suggested questions.'}</Text>}
+        {notStarted && (
+          <View style={s.startCard}>
+            <Text style={s.startTitle}>Horus isn’t listening yet</Text>
+            <Text style={s.startText}>Tap below when your appointment begins.</Text>
+            <Btn label="● Start listening" variant="primary" onPress={listen} style={{ minHeight: 64 }} />
+          </View>
+        )}
+        {!notStarted && active.length === 0 && answered.length === 0 && <Text style={s.empty}>{live ? 'Listening… questions will appear here.' : busy ? 'Connecting microphone…' : 'Start listening to see suggested questions.'}</Text>}
         {active.map((q, i) => (
           <Animated.View key={q.question_id} layout={LinearTransition} entering={FadeIn} exiting={FadeOut} style={[s.q, i === 0 && s.qTop]}>
             <View style={s.tagRow}>
@@ -317,6 +326,9 @@ const s = StyleSheet.create({
   time: { fontSize: 16, fontWeight: '500', color: C.muted, fontVariant: ['tabular-nums'] },
   qs: { paddingHorizontal: 16, paddingBottom: 16, gap: 12 },
   h2: { fontSize: 20, fontWeight: '700', color: C.ink },
+  startCard: { borderWidth: 3, borderColor: C.primary, backgroundColor: C.primaryTint, borderRadius: 12, padding: 18, gap: 10 },
+  startTitle: { fontSize: 22, fontWeight: '800', color: C.ink },
+  startText: { fontSize: 17, lineHeight: 24, color: C.ink },
   headRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   tsLink: { minHeight: 48, justifyContent: 'center' },
   link: { fontSize: 16, fontWeight: '700', color: C.primary, textDecorationLine: 'underline' },
