@@ -20,8 +20,8 @@ The transcript comes from speech-to-text. It may have speaker labels (`Doctor:`,
 ## Task
 
 1. Read `chunk` in the context of `prior_state`.
-2. Merge new facts into the state. Update facts that the doctor corrected. Do not drop earlier facts unless the transcript contradicts them.
-3. For each patient question, decide whether this chunk answers it. Only mark a question `answered` if the doctor's words directly address it, and quote the words.
+2. Merge new facts into the state. Update facts that the doctor corrected. Keep every fact, answered question, unclear item, red flag, and open topic from `prior_state` unless this chunk corrects or resolves it. A chunk about something else is not a reason to drop anything.
+3. Keep every entry already in `prior_state.answered_questions`. If the doctor corrects an answer, update it. For each patient question, decide whether this chunk answers it. Mark a question `answered` only if the doctor's words address what the patient asked, and quote the words. Different wording is fine: "Avoid alcohol" answers "Can I have a beer?"; "Exercise is fine" answers "Can I go to the gym?".
 4. List anything said that is unclear, such as a garbled drug name, a dose, or a date.
 5. List red-flag symptoms the patient mentioned, for example chest pain, trouble breathing, sudden weakness, or suicidal thoughts.
 
@@ -35,7 +35,7 @@ The transcript comes from speech-to-text. It may have speaker labels (`Doctor:`,
 
 ## Output
 
-Return only JSON:
+Return only the raw JSON object: no code fence, no other text.
 
 ```json
 {
@@ -56,3 +56,5 @@ Return only JSON:
   "open_topics": ["topics raised but not finished yet"]
 }
 ```
+
+Return the full merged state, not only the changes from this chunk.
