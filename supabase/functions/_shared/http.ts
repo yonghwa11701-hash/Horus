@@ -1,6 +1,7 @@
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2.117.3';
 import { z } from 'npm:zod@4.1.12';
 import type { Database } from '../../../src/types/database.ts';
+import { validationMessage } from './validation-errors.ts';
 
 export class ApiError extends Error {
   constructor(public status: number, public code: string, message: string) {
@@ -111,7 +112,7 @@ export function serve<T>(schema: z.ZodType<T>, handler: (body: T, context: Reque
       }
       const context = await authenticate(req, traceId);
       const parsed = schema.safeParse(await readJson(req));
-      if (!parsed.success) throw new ApiError(422, 'invalid_input', 'Request fields are invalid');
+      if (!parsed.success) throw new ApiError(422, 'invalid_input', validationMessage(parsed.error.issues));
       return new Response(JSON.stringify(await handler(parsed.data, context)), { status: 200, headers });
     } catch (error) {
       const problem = error instanceof ApiError ? error : new ApiError(500, 'internal_error', 'An unexpected error occurred');

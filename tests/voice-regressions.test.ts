@@ -5,6 +5,7 @@ import { test, type TestContext } from 'node:test';
 import { ScribeConnection, type ScribeDiagnostics, type ScribeFinal } from '../src/lib/voice/scribe.ts';
 import { isConsultationId, replayConsultationEvents } from '../src/lib/consultation-state.ts';
 import type { Session, Suggestion, TranscriptSegment } from '../src/types/consultation.ts';
+import { validationMessage } from '../supabase/functions/_shared/validation-errors.ts';
 
 class FakeSocket {
   static instances: FakeSocket[] = [];
@@ -42,6 +43,19 @@ function commit(socket: FakeSocket, text: string) {
   socket.emit({ message_type: 'committed_transcript_with_timestamps', text,
     words: text ? [{ start: 0, end: 0.5 }] : [] });
 }
+
+test('validation feedback exposes fixed field names/codes, not submitted data or unknown keys', () => {
+  const issues = [
+    { path: ['session_id'], code: 'invalid_type', message: 'sensitive-id', input: 'sensitive-id' },
+    { path: ['status'], code: 'invalid_value', message: 'sensitive-status' },
+    { path: [], code: 'unrecognized_keys', keys: ['sensitive-key'] },
+    { path: ['sensitive-field'], code: 'sensitive-code' },
+  ];
+  assert.equal(validationMessage(issues), 'Request fields are invalid (session_id: invalid_type; status: invalid_value; body: unrecognized_keys; body: invalid)');
+  assert.doesNotMatch(validationMessage(issues), /sensitive/);
+  assert.equal(validationMessage([]), 'Request fields are invalid');
+  assert.ok(validationMessage(Array(1000).fill(issues[0])).length < 200);
+});
 
 test('consultation UUID boundary rejects missing, array and literal dynamic-route values', () => {
   for (const value of [undefined, null, '', 'undefined', '[id]', 'session/[id]', 'not-a-uuid', [], ['abcdef01-2345-4678-9abc-def012345678'], {}]) {
