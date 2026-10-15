@@ -9,6 +9,7 @@ import {
   loadSummary, loadTranscriptCursor, retryPendingSegments, subscribeToConsultation,
 } from '@/lib/consultations';
 import type { Session, Suggestion, TranscriptSegment } from '@/types/consultation';
+import { replayConsultationEvents, type ConsultationEvent } from '@/lib/consultation-state';
 
 export default function VoiceDebugScreen() {
   const [consent, setConsent] = useState(false);
@@ -59,28 +60,41 @@ function SessionDebug({ initialSession, onDiscard }: { initialSession: Session; 
   const [busy, setBusy] = useState(false);
   const [summary, setSummary] = useState('');
   const [demoText, setDemoText] = useState('The doctor suggested a new medication. What side effects should I watch for?');
+  const bufferedEvents = useRef<ConsultationEvent[] | null>(null);
+  const refreshing = useRef<Promise<void> | null>(null);
+  const applyEvent = useCallback((event: ConsultationEvent) => {
+    bufferedEvents.current?.push(event);
+    if (event.kind === 'session') setSession(event.row);
+    else if (event.kind === 'transcript') setSegments((current) => mergeSegment(current, event.row));
+    else setSuggestions((current) => [
+      ...current.filter((row) => row.question_id !== event.row.question_id), event.row,
+    ]);
+  }, []);
   const voice = useConsultationVoice({
     sessionId: session.id,
-    onSegment: (segment) => setSegments((current) => mergeSegment(current, segment)),
+    onSegment: (row) => applyEvent({ kind: 'transcript', row }),
     onError: (value) => setError(value.message),
   });
 
-  const refresh = useCallback(async () => {
-    const state = await loadConsultation(initialSession.id);
-    setSession(state.session);
-    setSegments(state.segments);
-    setSuggestions(state.suggestions);
+  const refresh = useCallback((): Promise<void> => {
+    if (refreshing.current) return refreshing.current;
+    bufferedEvents.current = [];
+    refreshing.current = loadConsultation(initialSession.id).then((snapshot) => {
+      const state = replayConsultationEvents(snapshot, bufferedEvents.current ?? []);
+      setSession(state.session);
+      setSegments(state.segments);
+      setSuggestions(state.suggestions);
+    }).finally(() => { bufferedEvents.current = null; refreshing.current = null; });
+    return refreshing.current;
   }, [initialSession.id]);
 
   useEffect(() => {
     let disposed = false;
     let unsubscribe: (() => void) | undefined;
     void subscribeToConsultation(initialSession.id, {
-      onSession: setSession,
-      onTranscript: (segment) => setSegments((current) => mergeSegment(current, segment)),
-      onSuggestion: (suggestion) => setSuggestions((current) => [
-        ...current.filter((item) => item.question_id !== suggestion.question_id), suggestion,
-      ]),
+      onSession: (row) => applyEvent({ kind: 'session', row }),
+      onTranscript: (row) => applyEvent({ kind: 'transcript', row }),
+      onSuggestion: (row) => applyEvent({ kind: 'suggestion', row }),
       onStatus: (status) => {
         if (disposed) return;
         setRealtime(status);
@@ -89,7 +103,7 @@ function SessionDebug({ initialSession, onDiscard }: { initialSession: Session; 
     }).then((cleanup) => { if (disposed) cleanup(); else unsubscribe = cleanup; })
       .catch((value) => { if (!disposed) setError(message(value)); });
     return () => { disposed = true; unsubscribe?.(); };
-  }, [initialSession.id, refresh]);
+  }, [applyEvent, initialSession.id, refresh]);
 
   async function run(action: () => Promise<unknown>, success = '') {
     setBusy(true); setError(''); setNotice('');
@@ -99,16 +113,21 @@ function SessionDebug({ initialSession, onDiscard }: { initialSession: Session; 
   }
   const recording = voice.phase === 'recording';
   const locked = busy || voice.phase === 'starting' || voice.phase === 'stopping';
-  const ended = session.status === 'ending' || session.status === 'completed' || session.status === 'discarding';
+  const terminal = session.status === 'completed' || session.status === 'discarding';
+  const ended = session.status === 'ending' || terminal;
 
   return <>
     <ThemedText type="code" selectable>Session: {session.id}</ThemedText>
     <ThemedText>Session: {session.status} · Voice: {voice.phase}{'\n'}Realtime: {realtime} · Unsaved segments: {voice.pendingCount}</ThemedText>
     {error ? <ThemedText style={styles.error}>{error}</ThemedText> : null}
     {notice ? <ThemedText>{notice}</ThemedText> : null}
-    <Button title="Start / resume microphone" disabled={locked || recording || ended} onPress={() => void run(async () => { await voice.start(); await refresh(); })} />
-    <Button title="Pause (flush & save)" disabled={locked || !recording} onPress={() => void run(async () => { const result = await voice.pause(); setSession(result.session); })} />
-    <Button title="End & save transcript" disabled={locked || ended} onPress={() => void run(async () => { const result = await voice.end(); setSession(result.session); }, 'Transcript and audit snapshots saved.')} />
+    {voice.unconfirmedAudio ? <>
+      <ThemedText style={styles.error}>Some audio was not confirmed and may be missing. Review the transcript and partial text below. Acknowledge this explicitly, then repeat or manually enter any missing words.</ThemedText>
+      <Button title="I acknowledge that unconfirmed audio may be missing" disabled={locked} onPress={() => void run(async () => { voice.acknowledgeUnconfirmedAudio(); }, 'Missing-audio warning acknowledged.')} />
+    </> : null}
+    <Button title="Start / resume microphone" disabled={locked || recording || ended || voice.unconfirmedAudio} onPress={() => void run(async () => { await voice.start(); await refresh(); })} />
+    <Button title="Pause (flush & save)" disabled={locked || !recording} onPress={() => void run(async () => { const result = await voice.pause(); applyEvent({ kind: 'session', row: result.session }); })} />
+    <Button title={session.status === 'ending' ? 'Retry saving transcript & audit' : 'End & save transcript'} disabled={locked || terminal || voice.unconfirmedAudio} onPress={() => void run(async () => { const result = await voice.end(); applyEvent({ kind: 'session', row: result.session }); }, 'Transcript and audit snapshots saved.')} />
     <Button title="Retry unsaved segments" disabled={locked || !voice.pendingCount} onPress={() => void run(voice.flush, 'Pending transcript writes retried.')} />
     <Button title="Refresh stored data" disabled={locked} onPress={() => void run(refresh)} />
     <ThemedText type="smallBold">Live partial (not persisted)</ThemedText>
@@ -119,13 +138,13 @@ function SessionDebug({ initialSession, onDiscard }: { initialSession: Session; 
     </ThemedText>)}
     <ThemedText type="smallBold">Manual synthetic fallback</ThemedText>
     <TextInput style={styles.input} value={demoText} onChangeText={setDemoText} multiline accessibilityLabel="Synthetic transcript text" />
-    <Button title="Submit synthetic final segment" disabled={locked || recording || session.status !== 'active' || !demoText.trim()} onPress={() => void run(async () => {
+    <Button title="Submit synthetic final segment" disabled={locked || recording || voice.pendingCount > 0 || voice.unconfirmedAudio || session.status !== 'active' || !demoText.trim()} onPress={() => void run(async () => {
       const cursor = await loadTranscriptCursor(session.id);
       const result = await appendFinalTranscript({
         id: randomUUID(), session_id: session.id, sequence: cursor.sequence, text: demoText.trim(),
         start_ms: cursor.offsetMs, end_ms: cursor.offsetMs + 3000, source: 'manual_demo',
       });
-      setSegments((current) => mergeSegment(current, result.segment));
+      applyEvent({ kind: 'transcript', row: result.segment });
       setNotice(`Transcript persisted; agent dispatch: ${result.agent_dispatch}.`);
     })} />
     <ThemedText type="smallBold">AI integration (Person 3 required)</ThemedText>

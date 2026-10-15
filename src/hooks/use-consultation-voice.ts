@@ -25,6 +25,8 @@ export function useConsultationVoice(options: Options) {
   const [phase, setPhase] = useState<VoicePhase>('idle');
   const [partialTranscript, setPartialTranscript] = useState('');
   const [pendingCount, setPendingCount] = useState(0);
+  const [unconfirmedAudio, setUnconfirmedAudio] = useState(false);
+  const unconfirmed = useRef(false);
   const connection = useRef<ScribeConnection | null>(null);
   const queue = useRef<FinalTranscriptInput[]>([]);
   const draining = useRef<Promise<void> | null>(null);
@@ -32,15 +34,21 @@ export function useConsultationVoice(options: Options) {
   const generation = useRef(0);
   const stopMicrophone = useRef<() => void>(() => {});
 
+  const markUnconfirmed = useCallback(() => {
+    unconfirmed.current = true;
+    setUnconfirmedAudio(true);
+  }, []);
+
   const reportError = useCallback((value: unknown) => {
     const error = value instanceof Error ? value : new Error('Voice capture failed.');
+    if (connection.current?.hasUnconfirmedAudio) markUnconfirmed();
     stopMicrophone.current();
     connection.current?.close();
     connection.current = null;
     setPhase('error');
     callbacks.current.onError?.(error);
     return error;
-  }, []);
+  }, [markUnconfirmed]);
 
   const onBuffer = useCallback((buffer: MicrophoneBuffer) => {
     try { connection.current?.send(buffer); }
@@ -68,6 +76,7 @@ export function useConsultationVoice(options: Options) {
   }, []);
 
   const start = useCallback(async () => {
+    if (unconfirmed.current) throw new Error('Review and explicitly acknowledge the unconfirmed audio before resuming.');
     if (busy.current || connection.current) throw new Error('Voice is already starting or running.');
     busy.current = true;
     const version = generation.current;
@@ -90,12 +99,7 @@ export function useConsultationVoice(options: Options) {
           setPendingCount(queue.current.length);
           void flush().catch(reportError);
         },
-        onError: (error) => {
-          microphone.stop();
-          connection.current?.close();
-          connection.current = null;
-          reportError(error);
-        },
+        onError: reportError,
       }, cursor.offsetMs);
       connection.current = scribe;
       await scribe.connect(token);
@@ -111,12 +115,16 @@ export function useConsultationVoice(options: Options) {
   }, [flush, microphone, options.sessionId, reportError]);
 
   const stop = useCallback(async () => {
+    if (unconfirmed.current) throw new Error('Final audio is unconfirmed. Review the transcript and explicitly acknowledge missing audio before ending.');
     if (busy.current) throw new Error('Wait for the current voice operation to finish.');
     busy.current = true;
     setPhase('stopping');
     microphone.stop();
     try {
-      await connection.current?.finish();
+      if (connection.current) {
+        try { await connection.current.finish(); }
+        catch (error) { markUnconfirmed(); throw error; }
+      }
       connection.current = null;
       await flush();
       setPhase('idle');
@@ -127,7 +135,7 @@ export function useConsultationVoice(options: Options) {
       reportError(error);
       throw error;
     } finally { busy.current = false; }
-  }, [flush, microphone, reportError]);
+  }, [flush, markUnconfirmed, microphone, reportError]);
 
   const pause = useCallback(async () => {
     await stop();
@@ -148,6 +156,8 @@ export function useConsultationVoice(options: Options) {
       await draining.current?.catch(() => {});
       await discardConsultation(options.sessionId);
       setPendingCount(0);
+      unconfirmed.current = false;
+      setUnconfirmedAudio(false);
       setPartialTranscript('');
       setPhase('idle');
     } catch (error) { reportError(error); throw error; }
@@ -160,9 +170,10 @@ export function useConsultationVoice(options: Options) {
         // Privacy: never keep the microphone running in the background.
         generation.current++;
         microphone.stop();
+        if (connection.current?.hasUnconfirmedAudio) markUnconfirmed();
         connection.current?.close();
         connection.current = null;
-        setPhase('idle');
+        setPhase(unconfirmed.current ? 'error' : 'idle');
       }
     });
     return () => {
@@ -172,7 +183,16 @@ export function useConsultationVoice(options: Options) {
       connection.current?.close();
       connection.current = null;
     };
-  }, [microphone]);
+  }, [markUnconfirmed, microphone]);
 
-  return { phase, partialTranscript, pendingCount, start, stop, pause, end, discard, flush };
+  const acknowledgeUnconfirmedAudio = useCallback(() => {
+    if (busy.current || connection.current) throw new Error('Stop voice capture before acknowledging missing audio.');
+    // Explicit user decision, never an automatic recovery or a side effect of retrying End.
+    unconfirmed.current = false;
+    setUnconfirmedAudio(false);
+    setPartialTranscript('');
+    setPhase('idle');
+  }, []);
+
+  return { phase, partialTranscript, pendingCount, unconfirmedAudio, acknowledgeUnconfirmedAudio, start, stop, pause, end, discard, flush };
 }
