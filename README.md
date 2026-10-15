@@ -1,1 +1,1 @@
-# Hours - Accel Hackathon
+# Horus - Accel Hackathon
