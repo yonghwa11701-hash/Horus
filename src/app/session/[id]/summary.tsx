@@ -5,6 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Btn, confirm } from '@/components/ui';
 import { C } from '@/constants/theme';
+import { loadSavedAppointment, removeSavedAppointment, saveAppointment } from '@/lib/appointments';
 import { discardConsultation, loadConsultation, loadSummary } from '@/lib/consultations';
 import type { TranscriptSegment } from '@/types/consultation';
 
@@ -27,16 +28,36 @@ export default function SummaryScreen() {
   const [summary, setSummary] = useState<SummaryPayload | null>(null);
   const [segments, setSegments] = useState<TranscriptSegment[]>([]);
   const [saved, setSaved] = useState(false);
+  const [source, setSource] = useState<'cloud' | 'device'>('cloud');
   const [failed, setFailed] = useState(false);
   const [showTranscript, setShowTranscript] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
-    loadSummary(id).then((envelope) => setSummary(envelope.payload as SummaryPayload), () => setFailed(true));
-    loadConsultation(id).then(({ session, segments }) => {
-      setSegments(segments);
-      setSaved(session.status === 'completed');
-    }, () => {});
+    let alive = true;
+    Promise.all([loadSummary(id), loadConsultation(id)]).then(
+      ([envelope, { session, segments }]) => {
+        if (!alive) return;
+        const payload = envelope.payload as SummaryPayload;
+        setSummary(payload);
+        setSegments(segments);
+        setSaved(session.status === 'completed');
+        void saveAppointment({ id, at: session.ended_at ?? session.updated_at, headline: payload?.headline, summary: payload, segments });
+      },
+      // Offline, or a new anonymous sign-in (e.g. a new browser tab) can't read it from the cloud: use the device copy.
+      async () => {
+        const local = await loadSavedAppointment(id);
+        if (!alive) return;
+        if (!local) return setFailed(true);
+        setSummary(local.summary as SummaryPayload);
+        setSegments(local.segments);
+        setSaved(true);
+        setSource('device');
+      },
+    );
+    return () => {
+      alive = false;
+    };
   }, [id]);
 
   function done() {
@@ -48,7 +69,9 @@ export default function SummaryScreen() {
     confirm('Delete this appointment?', 'The transcript and summary will be deleted. This cannot be undone.', 'Delete', async () => {
       setDeleting(true);
       try {
-        await discardConsultation(id);
+        // A device-only copy has no cloud row this sign-in can delete.
+        if (source === 'cloud') await discardConsultation(id);
+        await removeSavedAppointment(id);
         done();
       } catch {
         setDeleting(false);
@@ -64,7 +87,7 @@ export default function SummaryScreen() {
         <Text style={s.h1} accessibilityRole="header">
           Your appointment
         </Text>
-        {saved && <Text style={s.saved}>✓ Saved</Text>}
+        {saved && <Text style={s.saved}>{source === 'device' ? '✓ Saved on this device' : '✓ Saved'}</Text>}
       </View>
 
       <ScrollView contentContainerStyle={s.body}>
