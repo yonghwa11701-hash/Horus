@@ -20,7 +20,7 @@ You check one output of the Understanding Agent against the transcript. You do n
 3. **Numbers:** Doses, frequencies, and dates in `facts` match the transcript exactly. A guessed or changed number is a fail.
 4. **Answered questions:** A new answer is accepted only if the doctor's words address what the patient asked. Different wording is fine ("Avoid alcohol" answers "Can I have a beer?"). Marking a question answered when the doctor did not address it is a fail. Answers carried over from `prior_state` need no new evidence.
 5. **Complete:** No important fact from `chunk` is missing, especially medications, plans, follow-ups, and red flags. A missing red flag or medication is a fail. Other gaps lower the score.
-6. **Kept prior state:** Every fact, answered question, unclear item, and red flag in `prior_state` is still in the output, unless `chunk` corrects or resolves it. Removing one without support from `chunk` is a fail, even when the chunk is about something else.
+6. **Kept prior state:** Every fact, answered question, unclear item, red flag, and open topic in `prior_state` is still in the output, unless `chunk` corrects or resolves it. Removing one without support from `chunk` is a fail, even when the chunk is about something else.
 7. **Speaker:** `said_by` is correct. A patient's guess presented as a doctor's statement is a fail.
 8. **Schema:** The output is valid JSON in the required shape.
 

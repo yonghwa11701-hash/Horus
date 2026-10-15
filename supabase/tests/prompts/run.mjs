@@ -105,6 +105,11 @@ async function runScenario(s) {
 }
 
 const only = process.argv.slice(2);
+const unknown = only.filter((n) => !scenarios.some((s) => s.name === n));
+if (unknown.length) {
+  console.error(`Unknown scenario(s): ${unknown.join(", ")}\nKnown: ${scenarios.map((s) => s.name).join(", ")}`);
+  process.exit(2);
+}
 const picked = only.length ? scenarios.filter((s) => only.includes(s.name)) : scenarios;
 const settled = await Promise.allSettled(picked.map(runScenario));
 let failed = 0;
