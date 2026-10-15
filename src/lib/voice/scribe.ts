@@ -30,7 +30,8 @@ type PendingCommit = {
   reject: (error: Error) => void;
   timer: ReturnType<typeof setTimeout>;
 };
-const COMMIT_SAMPLES = 5 * 16000;
+// Earlier durable segments start live analysis sooner; stay above Scribe's two-second minimum.
+const COMMIT_SAMPLES = 3 * 16000;
 const MAX_BUFFERED_BYTES = 512 * 1024;
 
 export class ScribeConnection {
