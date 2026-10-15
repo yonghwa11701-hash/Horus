@@ -2,7 +2,7 @@ import * as Haptics from 'expo-haptics';
 import { Redirect, router, useLocalSearchParams } from 'expo-router';
 import { usePreventRemove } from 'expo-router/react-navigation';
 import { useEffect, useRef, useState } from 'react';
-import { AccessibilityInfo, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { AccessibilityInfo, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeIn, FadeOut, LinearTransition } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -11,7 +11,7 @@ import { C } from '@/constants/theme';
 import { useConsultationVoice } from '@/hooks/use-consultation-voice';
 import { loadConsultation, subscribeToConsultation } from '@/lib/consultations';
 import { isConsultationId } from '@/lib/consultation-state';
-import type { Suggestion } from '@/types/consultation';
+import type { Suggestion, TranscriptSegment } from '@/types/consultation';
 
 const RANK = { critical: 0, high: 1, medium: 2, low: 3 } as const;
 const MAX_CARDS = 3; // CLAUDE.md §3
@@ -56,6 +56,8 @@ function Live({ id }: { id: string }) {
   const [paused, setPaused] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [ending, setEnding] = useState(false);
+  const [segments, setSegments] = useState<Map<string, TranscriptSegment>>(new Map());
+  const [showTranscript, setShowTranscript] = useState(false);
   const rowsRef = useRef<Rows>(rows);
   const dismissedRef = useRef(dismissed);
   const pausedRef = useRef(paused);
@@ -114,13 +116,25 @@ function Live({ id }: { id: string }) {
       setRows(next);
     }
 
+    const addSegments = (rows: TranscriptSegment[]) =>
+      setSegments((m) => {
+        const next = new Map(m);
+        rows.forEach((seg) => next.set(seg.id, seg));
+        return next;
+      });
+
     let unsubscribe: (() => void) | undefined;
     let alive = true;
     subscribeToConsultation(id, {
       onSuggestion: (q) => apply([q]),
+      onTranscript: (seg) => addSegments([seg]),
       // Reload on every (re)subscribe so rows missed while disconnected are not lost.
       onStatus: (status) => {
-        if (status === 'SUBSCRIBED') loadConsultation(id).then(({ suggestions }) => alive && apply(suggestions), () => {});
+        if (status === 'SUBSCRIBED') loadConsultation(id).then(({ suggestions, segments }) => {
+            if (!alive) return;
+            apply(suggestions);
+            addSegments(segments);
+          }, () => {});
       },
     }).then(
       (u) => (alive ? (unsubscribe = u) : u()),
@@ -197,9 +211,14 @@ function Live({ id }: { id: string }) {
       )}
 
       <ScrollView contentContainerStyle={s.qs}>
-        <Text style={s.h2} accessibilityRole="header">
-          Ask your doctor
-        </Text>
+        <View style={s.headRow}>
+          <Text style={s.h2} accessibilityRole="header">
+            Ask your doctor
+          </Text>
+          <Pressable accessibilityRole="button" onPress={() => setShowTranscript(true)} hitSlop={12} style={s.tsLink}>
+            <Text style={s.link}>Transcript ›</Text>
+          </Pressable>
+        </View>
         {active.length === 0 && answered.length === 0 && <Text style={s.empty}>{live ? 'Listening… questions will appear here.' : busy ? 'Connecting microphone…' : 'Start listening to see suggested questions.'}</Text>}
         {active.map((q, i) => (
           <Animated.View key={q.question_id} layout={LinearTransition} entering={FadeIn} exiting={FadeOut} style={[s.q, i === 0 && s.qTop]}>
@@ -230,7 +249,52 @@ function Live({ id }: { id: string }) {
       <View style={s.foot}>
         <Btn label={ending ? 'Ending…' : 'End consultation'} variant="ink" onPress={end} disabled={ending || busy} />
       </View>
+
+      <LiveTranscript
+        visible={showTranscript}
+        segments={[...segments.values()].sort((a, b) => a.sequence - b.sequence)}
+        partial={voice.partialTranscript}
+        status={statusLabel}
+        onClose={() => setShowTranscript(false)}
+      />
     </SafeAreaView>
+  );
+}
+
+const clock = (ms: number) => `${String(Math.floor(ms / 60000)).padStart(2, '0')}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
+
+function LiveTranscript({ visible, segments, partial, status, onClose }: {
+  visible: boolean; segments: TranscriptSegment[]; partial: string; status: string; onClose: () => void;
+}) {
+  const scroll = useRef<ScrollView>(null);
+  return (
+    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+      <SafeAreaView style={s.root}>
+        <View style={s.tsHead}>
+          <Text style={s.tsTitle} accessibilityRole="header">
+            Transcript
+          </Text>
+          <Text style={s.time}>{status} · newest at the bottom</Text>
+        </View>
+        <ScrollView ref={scroll} onContentSizeChange={() => scroll.current?.scrollToEnd({ animated: false })} contentContainerStyle={s.tsBody}>
+          {segments.length === 0 && !partial && <Text style={s.empty}>Nothing heard yet.</Text>}
+          {segments.map((seg) => (
+            <View key={seg.id}>
+              <Text style={s.segTime}>{clock(seg.start_ms)}</Text>
+              <Text style={s.segText}>{seg.text}</Text>
+            </View>
+          ))}
+          {!!partial && (
+            <Text style={s.partial} accessibilityLiveRegion="polite">
+              {partial}…
+            </Text>
+          )}
+        </ScrollView>
+        <View style={s.foot}>
+          <Btn label="Back to questions" onPress={onClose} />
+        </View>
+      </SafeAreaView>
+    </Modal>
   );
 }
 
@@ -244,6 +308,15 @@ const s = StyleSheet.create({
   time: { fontSize: 16, fontWeight: '500', color: C.muted, fontVariant: ['tabular-nums'] },
   qs: { paddingHorizontal: 16, paddingBottom: 16, gap: 12 },
   h2: { fontSize: 20, fontWeight: '700', color: C.ink },
+  headRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  tsLink: { minHeight: 48, justifyContent: 'center' },
+  link: { fontSize: 16, fontWeight: '700', color: C.primary, textDecorationLine: 'underline' },
+  tsHead: { paddingHorizontal: 16, paddingTop: 8, paddingBottom: 8, gap: 2 },
+  tsTitle: { fontSize: 24, fontWeight: '800', color: C.ink },
+  tsBody: { paddingHorizontal: 16, paddingBottom: 16, gap: 14 },
+  segTime: { fontSize: 14, fontWeight: '700', color: C.muted },
+  segText: { fontSize: 17, lineHeight: 25, color: C.ink },
+  partial: { fontSize: 17, lineHeight: 25, color: C.muted, fontStyle: 'italic' },
   empty: { fontSize: 17, color: C.muted, lineHeight: 24 },
   q: { borderWidth: 2, borderColor: C.line, borderRadius: 12, padding: 14 },
   qTop: { borderWidth: 3, borderColor: C.primary, backgroundColor: C.primaryTint },

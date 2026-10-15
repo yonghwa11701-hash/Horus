@@ -18,21 +18,22 @@ You check one output of the Understanding Agent against the transcript. You do n
 1. **Grounded:** Each fact, answer, and red flag is supported by its `evidence` quote, and the quote appears in `chunk` or `prior_state`. Any invented content is a fail.
 2. **No added medicine:** No diagnosis, advice, or opinion that the doctor did not give. Any added medicine is a fail.
 3. **Numbers:** Doses, frequencies, and dates in `facts` match the transcript exactly. A guessed or changed number is a fail.
-4. **Answered questions:** A question is marked answered only if the doctor addressed it directly. Marking it too early is a fail.
+4. **Answered questions:** A new answer is accepted only if the doctor's words address what the patient asked. Different wording is fine ("Avoid alcohol" answers "Can I have a beer?"). Marking a question answered when the doctor did not address it is a fail. Answers carried over from `prior_state` need no new evidence.
 5. **Complete:** No important fact from `chunk` is missing, especially medications, plans, follow-ups, and red flags. A missing red flag or medication is a fail. Other gaps lower the score.
-6. **Speaker:** `said_by` is correct. A patient's guess presented as a doctor's statement is a fail.
-7. **Schema:** The output is valid JSON in the required shape.
+6. **Kept prior state:** Every fact, answered question, unclear item, red flag, and open topic in `prior_state` is still in the output, unless `chunk` corrects or resolves it. Removing one without support from `chunk` is a fail, even when the chunk is about something else.
+7. **Speaker:** `said_by` is correct. A patient's guess presented as a doctor's statement is a fail.
+8. **Schema:** The output is valid JSON in the required shape.
 
 ## Output
 
-Return only JSON:
+Return only the raw JSON object: no code fence, no other text.
 
 ```json
 {
   "pass": true,
   "score": 1-5,
   "issues": [
-    { "check": "grounded | no_added_medicine | numbers | answered | complete | speaker | schema", "location": "facts[2]", "problem": "...", "fix": "..." }
+    { "check": "grounded | no_added_medicine | numbers | answered | complete | kept_prior | speaker | schema", "location": "facts[2]", "problem": "...", "fix": "..." }
   ],
   "feedback": "short instructions for the agent's retry; empty if pass"
 }
