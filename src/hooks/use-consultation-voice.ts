@@ -4,7 +4,7 @@ import { AppState } from 'react-native';
 import {
   appendFinalTranscript, discardConsultation, getScribeToken, loadTranscriptCursor, setSessionStatus,
 } from '@/lib/consultations';
-import { ScribeConnection } from '@/lib/voice/scribe';
+import { EMPTY_SCRIBE_DIAGNOSTICS, ScribeConnection } from '@/lib/voice/scribe';
 import type { MicrophoneBuffer } from '@/lib/voice/pcm';
 import type { FinalTranscriptInput, TranscriptSegment } from '@/types/consultation';
 import { useMicrophone } from './use-microphone';
@@ -33,6 +33,26 @@ export function useConsultationVoice(options: Options) {
   const busy = useRef(false);
   const generation = useRef(0);
   const stopMicrophone = useRef<() => void>(() => {});
+  const diagnosticSource = useRef<ScribeConnection | null>(null);
+  const microphoneStats = useRef({ captured_ms: 0, level: 0, sample_rate: 0, last_buffer: 0 });
+  const [diagnostics, setDiagnostics] = useState({
+    ...EMPTY_SCRIBE_DIAGNOSTICS, captured_ms: 0, level_percent: 0, sample_rate: 0,
+  });
+
+  useEffect(() => {
+    const update = () => {
+      const mic = microphoneStats.current;
+      setDiagnostics({
+        ...(diagnosticSource.current?.diagnostics ?? EMPTY_SCRIBE_DIAGNOSTICS),
+        captured_ms: Math.round(mic.captured_ms), sample_rate: mic.sample_rate,
+        level_percent: Date.now() - mic.last_buffer < 1000 ? Math.round(mic.level * 100) : 0,
+      });
+    };
+    update();
+    if (phase !== 'starting' && phase !== 'recording' && phase !== 'stopping') return;
+    const timer = setInterval(update, 500);
+    return () => clearInterval(timer);
+  }, [phase]);
 
   const markUnconfirmed = useCallback(() => {
     unconfirmed.current = true;
@@ -51,7 +71,23 @@ export function useConsultationVoice(options: Options) {
   }, [markUnconfirmed]);
 
   const onBuffer = useCallback((buffer: MicrophoneBuffer) => {
-    try { connection.current?.send(buffer); }
+    try {
+      if (buffer.sampleRate <= 0 || buffer.channels <= 0) throw new Error('Invalid microphone format.');
+      const width = buffer.encoding === 'int16' ? 2 : 4;
+      const samples = Math.floor(buffer.data.byteLength / width);
+      const view = new DataView(buffer.data);
+      let peak = 0;
+      for (let index = 0; index < samples; index++) {
+        const value = buffer.encoding === 'int16' ? view.getInt16(index * width, true) / 32768 : view.getFloat32(index * width, true);
+        if (Number.isFinite(value)) peak = Math.max(peak, Math.abs(value));
+      }
+      const mic = microphoneStats.current;
+      mic.captured_ms += samples / buffer.channels / buffer.sampleRate * 1000;
+      mic.level = Math.min(1, peak);
+      mic.sample_rate = buffer.sampleRate;
+      mic.last_buffer = Date.now();
+      connection.current?.send(buffer);
+    }
     catch (error) {
       stopMicrophone.current();
       connection.current?.close();
@@ -81,14 +117,18 @@ export function useConsultationVoice(options: Options) {
     busy.current = true;
     const version = generation.current;
     setPhase('starting');
+    microphoneStats.current = { captured_ms: 0, level: 0, sample_rate: 0, last_buffer: 0 };
+    diagnosticSource.current = null;
     try {
+      // Invoke capture inside the click, before ANY await/network work. Otherwise
+      // browser autoplay policy can leave AudioContext.resume() waiting indefinitely.
+      // Do not speak until recording: buffers are ignored while Scribe is connecting.
+      await microphone.start();
+      if (version !== generation.current) throw new Error('Voice start cancelled.');
       await flush();
       await setSessionStatus(options.sessionId, 'active');
       const cursor = await loadTranscriptCursor(options.sessionId);
       let sequence = cursor.sequence;
-      // Start capture before network work to preserve the browser's user gesture.
-      // Buffers are ignored until the authenticated Scribe session is ready.
-      await microphone.start();
       if (version !== generation.current) throw new Error('Voice start cancelled.');
       const { token } = await getScribeToken(options.sessionId);
       if (version !== generation.current) throw new Error('Voice start cancelled.');
@@ -102,6 +142,7 @@ export function useConsultationVoice(options: Options) {
         onError: reportError,
       }, cursor.offsetMs);
       connection.current = scribe;
+      diagnosticSource.current = scribe;
       await scribe.connect(token);
       if (version !== generation.current) throw new Error('Voice start cancelled.');
       setPhase('recording');
@@ -194,5 +235,5 @@ export function useConsultationVoice(options: Options) {
     setPhase('idle');
   }, []);
 
-  return { phase, partialTranscript, pendingCount, unconfirmedAudio, acknowledgeUnconfirmedAudio, start, stop, pause, end, discard, flush };
+  return { phase, partialTranscript, pendingCount, diagnostics, unconfirmedAudio, acknowledgeUnconfirmedAudio, start, stop, pause, end, discard, flush };
 }

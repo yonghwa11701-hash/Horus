@@ -121,6 +121,23 @@ function SessionDebug({ initialSession, onDiscard }: { initialSession: Session; 
     <ThemedText>Session: {session.status} · Voice: {voice.phase}{'\n'}Realtime: {realtime} · Unsaved segments: {voice.pendingCount}</ThemedText>
     {error ? <ThemedText style={styles.error}>{error}</ThemedText> : null}
     {notice ? <ThemedText>{notice}</ThemedText> : null}
+    <ThemedText type="code">
+      Mic captured: {(voice.diagnostics.captured_ms / 1000).toFixed(1)}s · Peak: {voice.diagnostics.level_percent}% · {voice.diagnostics.sample_rate} Hz{'\n'}
+      Scribe connected: {voice.diagnostics.connected ? 'yes' : 'no'} · Sent: {(voice.diagnostics.sent_ms / 1000).toFixed(1)}s · Buffered: {(voice.diagnostics.buffered_ms / 1000).toFixed(1)}s{'\n'}
+      Commits: {voice.diagnostics.commit_confirmations}/{voice.diagnostics.commit_requests} · Partials: {voice.diagnostics.partial_events} · Finals: {voice.diagnostics.final_events}{'\n'}
+      Last Scribe event: {voice.diagnostics.last_event}
+    </ThemedText>
+    <ThemedText type="small">Wait for Voice: recording before speaking. Say a sentence, wait 5–10 seconds, then Pause to save the final words. Sent duration includes flush silence.</ThemedText>
+    {voice.phase === 'starting' ? <ThemedText>Connecting microphone and Scribe—do not speak yet.</ThemedText> : null}
+    {voice.phase === 'recording' && !voice.diagnostics.captured_ms ? <ThemedText style={styles.error}>No microphone audio buffers received yet. Check microphone permission and your selected input device.</ThemedText> : null}
+    {voice.phase === 'recording' && voice.diagnostics.captured_ms > 0 && voice.diagnostics.level_percent === 0 ? <ThemedText>The microphone is currently silent. Its peak should change while you speak; otherwise check your microphone/input or OS mute setting.</ThemedText> : null}
+    <ThemedText type="smallBold">Live partial (not persisted)</ThemedText>
+    <ThemedText selectable>{voice.partialTranscript || 'No live words received yet.'}</ThemedText>
+    <ThemedText type="smallBold">Final transcript ({segments.length})</ThemedText>
+    {!segments.length ? <ThemedText>No confirmed transcript saved yet. The counters above show whether audio is reaching Scribe.</ThemedText> : null}
+    {segments.slice(-20).map((segment) => <ThemedText key={segment.id} selectable>
+      #{segment.sequence} [{segment.start_ms}–{segment.end_ms} ms] ({segment.processing_status}) {segment.text}
+    </ThemedText>)}
     {voice.unconfirmedAudio ? <>
       <ThemedText style={styles.error}>Some audio was not confirmed and may be missing. Review the transcript and partial text below. Acknowledge this explicitly, then repeat or manually enter any missing words.</ThemedText>
       <Button title="I acknowledge that unconfirmed audio may be missing" disabled={locked} onPress={() => void run(async () => { voice.acknowledgeUnconfirmedAudio(); }, 'Missing-audio warning acknowledged.')} />
@@ -130,12 +147,6 @@ function SessionDebug({ initialSession, onDiscard }: { initialSession: Session; 
     <Button title={session.status === 'ending' ? 'Retry saving transcript & audit' : 'End & save transcript'} disabled={locked || terminal || voice.unconfirmedAudio} onPress={() => void run(async () => { const result = await voice.end(); applyEvent({ kind: 'session', row: result.session }); }, 'Transcript and audit snapshots saved.')} />
     <Button title="Retry unsaved segments" disabled={locked || !voice.pendingCount} onPress={() => void run(voice.flush, 'Pending transcript writes retried.')} />
     <Button title="Refresh stored data" disabled={locked} onPress={() => void run(refresh)} />
-    <ThemedText type="smallBold">Live partial (not persisted)</ThemedText>
-    <ThemedText>{voice.partialTranscript || '—'}</ThemedText>
-    <ThemedText type="smallBold">Final transcript ({segments.length})</ThemedText>
-    {segments.slice(-20).map((segment) => <ThemedText key={segment.id} selectable>
-      #{segment.sequence} [{segment.start_ms}–{segment.end_ms} ms] ({segment.processing_status}) {segment.text}
-    </ThemedText>)}
     <ThemedText type="smallBold">Manual synthetic fallback</ThemedText>
     <TextInput style={styles.input} value={demoText} onChangeText={setDemoText} multiline accessibilityLabel="Synthetic transcript text" />
     <Button title="Submit synthetic final segment" disabled={locked || recording || voice.pendingCount > 0 || voice.unconfirmedAudio || session.status !== 'active' || !demoText.trim()} onPress={() => void run(async () => {
