@@ -1,0 +1,46 @@
+project_id = "horus"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 54322
+major_version = 17
+
+[db.seed]
+enabled = false
+
+[realtime]
+enabled = true
+
+[storage]
+enabled = true
+file_size_limit = "10MiB"
+
+[auth]
+enabled = true
+site_url = "http://localhost:8081"
+additional_redirect_urls = ["horus://**"]
+enable_signup = true
+enable_anonymous_sign_ins = true
+
+# Hosted projects may use asymmetric JWT signing keys. Each handler verifies the JWT
+# with auth.getUser(token), so verification is not delegated to the legacy gateway.
+[functions.create-session]
+verify_jwt = false
+
+[functions.get-scribe-token]
+verify_jwt = false
+
+[functions.append-transcript]
+verify_jwt = false
+
+[functions.update-session]
+verify_jwt = false
+
+[functions.discard-session]
+verify_jwt = false

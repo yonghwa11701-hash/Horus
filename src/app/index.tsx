@@ -25,6 +25,12 @@ export default function Home() {
           style={{ minHeight: 60 }}
         />
         <Text style={s.small}>Horus doesn’t give medical advice.</Text>
+        {/* Team's voice pipeline debug screen; tabs were removed, so dev builds reach it from here. */}
+        {__DEV__ && (
+          <Text accessibilityRole="link" onPress={() => router.push('/voice-debug')} style={[s.small, { textDecorationLine: 'underline', paddingVertical: 12 }]}>
+            Voice debug
+          </Text>
+        )}
       </View>
     </SafeAreaView>
   );
