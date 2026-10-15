@@ -118,6 +118,7 @@ async function runBatch(admin: Admin, session: Session, memory: Memory, lockId: 
     const understanding = await produce(admin, session, 'understanding', understandingOutput,
       understandingInput, understandingInput, context);
     await saveJsonArtifact(admin, session, 'understanding', { ...context, flagged: understanding.flagged, state: understanding.output as Json });
+    if (understanding.flagged) throw new ApiError(502, 'understanding_rejected', 'Understanding failed evaluation');
 
     const before = forAgents(questions);
     const generated = await produce(admin, session, 'questions', questionsOutput,
