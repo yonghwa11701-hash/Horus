@@ -4,7 +4,7 @@ import type { Database, Json } from '../../../src/types/database.ts';
 import type { RequestContext } from './http.ts';
 import { adminClient, ApiError, databaseError } from './http.ts';
 import { ownedSession, recordSystemEvent, saveJsonArtifact } from './artifacts.ts';
-import { AGENT_MODEL, callAgent, REVIEW_MODEL } from './claude.ts';
+import { assertAgentConfigured, AGENT_MODEL, callAgent, REVIEW_MODEL } from './claude.ts';
 import { mergeQuestions, priorityLevel, suggestionStatus, type MemoryQuestion, type QuestionOut } from './agent-logic.ts';
 import { dispatchAgents } from './sessions.ts';
 
@@ -185,11 +185,11 @@ async function runBatch(admin: Admin, session: Session, memory: Memory, lockId: 
   }
 }
 
-// A segment to hand to the next invocation, or null. `processing` rows here were left by a
-// worker that died; the next batch picks them up again.
+// A segment to hand to the next invocation, or null. Include failed batches so a
+// repaired configuration/provider failure can be retried before finalization too.
 async function nextUnprocessed(admin: Admin, sessionId: string) {
   const { data, error } = await admin.from('transcript_segments').select('id')
-    .eq('session_id', sessionId).in('processing_status', ['pending', 'processing']).order('sequence').limit(1);
+    .eq('session_id', sessionId).neq('processing_status', 'completed').order('sequence').limit(1);
   if (error) databaseError(error);
   return data[0]?.id ?? null;
 }
@@ -249,6 +249,7 @@ export async function processSegment(body: { session_id: string; segment_id: str
   if (error) databaseError(error);
   if (!segment) throw new ApiError(404, 'segment_not_found', 'Segment not found');
   if (segment.processing_status === 'completed') return { status: 'not_needed' };
+  assertAgentConfigured(); // Fail visibly before scheduling work with missing configuration.
   // The agents take longer than the caller's dispatch timeout; segment rows are the durable queue.
   EdgeRuntime.waitUntil(drain(session, ctx.authorization).catch(logDrainFailure(session.id, ctx.traceId)));
   return { status: 'scheduled' };
@@ -266,6 +267,7 @@ export async function finalizeSession(body: { session_id: string }, ctx: Request
   };
   if (session.status === 'completed') return { summary_id: await existing(), status: 'completed' };
   if (session.status !== 'ending') throw new ApiError(409, 'session_not_ending', 'End the consultation before writing the summary');
+  assertAgentConfigured(); // A missing key is a configuration failure, not an agents_busy conflict.
 
   // The summary needs the questions from every segment; let the live agents finish first.
   if (await nextUnprocessed(admin, session.id)) {

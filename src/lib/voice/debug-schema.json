@@ -8,6 +8,6 @@
     "stage": ["microphone", "scribe", "transcript", "session", "voice"],
     "function_name": ["create-session", "get-scribe-token", "append-transcript", "update-session", "discard-session", "process-segment", "finalize-session"],
     "outcome": ["requested", "success", "failure", "queued", "closed", "pending"],
-    "error_code": ["invalid_session_id", "invalid_input", "PT401", "PT404", "PT409", "PT422", "PT429", "unauthenticated", "function_not_deployed", "service_unreachable", "database_unavailable", "internal_error", "configuration_missing", "conflict", "scribe_unavailable", "scribe_invalid_response"]
+    "error_code": ["invalid_session_id", "invalid_input", "PT401", "PT404", "PT409", "PT422", "PT429", "unauthenticated", "function_not_deployed", "service_unreachable", "database_unavailable", "internal_error", "configuration_missing", "conflict", "scribe_unavailable", "scribe_invalid_response", "agents_busy", "session_not_ending", "lease_lost", "summary_rejected", "agent_authentication_failed", "agent_model_unavailable", "agent_rate_limited", "agent_request_invalid", "agent_provider_unavailable", "agent_refused", "agent_invalid_output"]
   }
 }
