@@ -16,6 +16,7 @@ const RANK = { critical: 0, high: 1, medium: 2, low: 3 } as const;
 const MAX_CARDS = 3; // CLAUDE.md §3
 const SHOW_ANSWERED_MS = 3000;
 const MOVED_UP_MS = 3000;
+const SLOW_START_MS = 3000;
 
 type Rows = Map<string, Suggestion>;
 
@@ -59,6 +60,17 @@ export default function Live() {
   }, [dismissed, paused]);
 
   const busy = voice.phase === 'starting' || voice.phase === 'stopping';
+  const [slowStart, setSlowStart] = useState(false);
+
+  // A start that hangs is almost always an unanswered microphone permission prompt.
+  useEffect(() => {
+    if (voice.phase !== 'starting') return;
+    const timer = setTimeout(() => setSlowStart(true), SLOW_START_MS);
+    return () => {
+      clearTimeout(timer);
+      setSlowStart(false);
+    };
+  }, [voice.phase]);
   const live = voice.phase === 'recording';
 
   function listen() {
@@ -177,6 +189,7 @@ export default function Live() {
         />
       </View>
 
+      {slowStart && <Banner text="Waiting for microphone access. Allow it in your browser or phone settings." />}
       {paused && !live && <Banner text="Horus isn’t listening. Nothing is being recorded." />}
       {voice.unconfirmedAudio && (
         <Banner
