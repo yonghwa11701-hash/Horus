@@ -8,159 +8,208 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Banner, Btn, confirm } from '@/components/ui';
 import { C } from '@/constants/theme';
-import { useTranscription } from '@/hooks/useTranscription';
-import { dismissSuggestion, subscribeSuggestions } from '@/lib/api';
-import type { Suggestion } from '@/types/api';
+import { useConsultationVoice } from '@/hooks/use-consultation-voice';
+import { loadConsultation, subscribeToConsultation } from '@/lib/consultations';
+import type { Suggestion } from '@/types/consultation';
 
-const RANK = { high: 0, medium: 1, low: 2 } as const;
+const RANK = { critical: 0, high: 1, medium: 2, low: 3 } as const;
+const MAX_CARDS = 3; // CLAUDE.md §3
 const SHOW_ANSWERED_MS = 3000;
 const MOVED_UP_MS = 3000;
 
-/** Highest priority first, newest first within a priority; at most 3 (CLAUDE.md §3). */
-function rankActive(list: Suggestion[]) {
-  return list
-    .filter((q) => q.status === 'active')
+type Rows = Map<string, Suggestion>;
+
+const isUrgent = (q: Suggestion) => q.priority === 'critical' || q.priority === 'high';
+
+/** Highest priority first, newest first within a priority. */
+function rankActive(rows: Rows, dismissed: Set<string>) {
+  return [...rows.values()]
+    .filter((q) => q.status === 'approved' && !dismissed.has(q.question_id))
     .sort((a, b) => RANK[a.priority] - RANK[b.priority] || b.created_at.localeCompare(a.created_at))
-    .slice(0, 3);
+    .slice(0, MAX_CARDS);
+}
+
+/** Snapshot and Realtime rows can arrive out of order; keep the newest version of each. */
+function merge(rows: Rows, incoming: Suggestion[]): Rows {
+  const next = new Map(rows);
+  for (const q of incoming) {
+    const have = next.get(q.question_id);
+    if (!have || have.updated_at <= q.updated_at) next.set(q.question_id, q);
+  }
+  return next;
 }
 
 export default function Live() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const t = useTranscription({ sessionId: id });
-  const [all, setAll] = useState<Suggestion[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const voice = useConsultationVoice({ sessionId: id, onError: (e) => setError(e.message) });
+  const [rows, setRows] = useState<Rows>(new Map());
+  const [dismissed, setDismissed] = useState<Set<string>>(new Set());
   const [answered, setAnswered] = useState<Suggestion[]>([]);
   const [movedUp, setMovedUp] = useState<string | null>(null);
-  const [pending, setPending] = useState<string | null>(null);
-  const [failed, setFailed] = useState<string | null>(null);
+  const [paused, setPaused] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [ending, setEnding] = useState(false);
-  const prev = useRef<Suggestion[]>([]);
-  const paused = t.status === 'paused';
+  const rowsRef = useRef<Rows>(rows);
+  const dismissedRef = useRef(dismissed);
   const pausedRef = useRef(paused);
   useEffect(() => {
+    dismissedRef.current = dismissed;
     pausedRef.current = paused;
-  }, [paused]);
+  }, [dismissed, paused]);
+
+  const busy = voice.phase === 'starting' || voice.phase === 'stopping';
+  const live = voice.phase === 'recording';
+
+  function listen() {
+    setError(null);
+    voice.start().then(() => setPaused(false), () => {});
+  }
 
   useEffect(() => {
-    t.start();
+    voice.start().catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
-    if (t.status !== 'live') return;
+    if (!live) return;
     const timer = setInterval(() => setElapsed((e) => e + 1), 1000);
     return () => clearInterval(timer);
-  }, [t.status]);
+  }, [live]);
 
-  useEffect(
-    () =>
-      subscribeSuggestions(id, (list) => {
-        const before = rankActive(prev.current);
-        const after = rankActive(list);
-        const beforeIds = new Set(before.map((q) => q.id));
+  useEffect(() => {
+    function apply(incoming: Suggestion[]) {
+      const before = rankActive(rowsRef.current, dismissedRef.current);
+      const next = merge(rowsRef.current, incoming);
+      const after = rankActive(next, dismissedRef.current);
+      const beforeIds = new Set(before.map((q) => q.question_id));
 
-        // Auto-clear: a visible card the backend marked answered lingers briefly as "You asked this".
-        const justAnswered = list.filter((q) => q.status === 'answered' && beforeIds.has(q.id));
-        if (justAnswered.length) {
-          setAnswered((a) => [...a, ...justAnswered]);
-          setTimeout(() => setAnswered((a) => a.filter((q) => !justAnswered.includes(q))), SHOW_ANSWERED_MS);
+      const justAnswered = incoming.filter((q) => q.status === 'resolved' && beforeIds.has(q.question_id));
+      if (justAnswered.length) {
+        setAnswered((a) => [...a, ...justAnswered]);
+        setTimeout(() => setAnswered((a) => a.filter((q) => !justAnswered.includes(q))), SHOW_ANSWERED_MS);
+      }
+
+      const top = after[0];
+      if (top && top.question_id !== before[0]?.question_id) {
+        if (beforeIds.has(top.question_id)) {
+          setMovedUp(top.question_id);
+          setTimeout(() => setMovedUp((m) => (m === top.question_id ? null : m)), MOVED_UP_MS);
         }
+        // Paused: cards still update, but no buzz and no announcement (spec).
+        if (!pausedRef.current) AccessibilityInfo.announceForAccessibility(`New top question: ${top.question}`);
+      }
+      const newUrgent = after.some((q) => isUrgent(q) && !before.some((b) => b.question_id === q.question_id && isUrgent(b)));
+      if (newUrgent && !pausedRef.current) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
-        const top = after[0];
-        if (top && top.id !== before[0]?.id) {
-          if (beforeIds.has(top.id)) {
-            setMovedUp(top.id);
-            setTimeout(() => setMovedUp((m) => (m === top.id ? null : m)), MOVED_UP_MS);
-          }
-          // Paused: cards still update, but no buzz and no announcement (spec).
-          if (!pausedRef.current) AccessibilityInfo.announceForAccessibility(`New top question: ${top.question}`);
-        }
-        const newHigh = after.some((q) => q.priority === 'high' && !prev.current.some((p) => p.id === q.id && p.priority === 'high'));
-        if (newHigh && !pausedRef.current) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-
-        prev.current = list;
-        setAll(list);
-      }),
-    [id],
-  );
-
-  async function dismiss(q: Suggestion) {
-    setPending(q.id);
-    setFailed(null);
-    try {
-      await dismissSuggestion(id, q.id);
-    } catch {
-      setFailed(q.id);
-    } finally {
-      setPending(null);
+      rowsRef.current = next;
+      setRows(next);
     }
+
+    let unsubscribe: (() => void) | undefined;
+    let alive = true;
+    subscribeToConsultation(id, {
+      onSuggestion: (q) => apply([q]),
+      // Reload on every (re)subscribe so rows missed while disconnected are not lost.
+      onStatus: (status) => {
+        if (status === 'SUBSCRIBED') loadConsultation(id).then(({ suggestions }) => alive && apply(suggestions), () => {});
+      },
+    }).then(
+      (u) => (alive ? (unsubscribe = u) : u()),
+      (e) => setError(e instanceof Error ? e.message : String(e)),
+    );
+    return () => {
+      alive = false;
+      unsubscribe?.();
+    };
+  }, [id]);
+
+  async function pause() {
+    try {
+      await voice.pause();
+      setPaused(true);
+    } catch {}
   }
 
   async function end() {
     setEnding(true);
-    await t.stop();
-    router.replace(`/session/${id}/ending`);
+    try {
+      await voice.end();
+      router.replace(`/session/${id}/ending`);
+    } catch {
+      setEnding(false);
+    }
   }
 
   // Android back / swipe-back must not silently end the recording.
   usePreventRemove(!ending, () => confirm('End consultation?', 'Horus will stop listening and write your summary.', 'End', end));
 
-  const active = rankActive(all);
+  const active = rankActive(rows, dismissed);
   const mm = String(Math.floor(elapsed / 60)).padStart(2, '0');
   const ss = String(elapsed % 60).padStart(2, '0');
-  const statusLabel = t.status === 'connecting' || t.status === 'idle' ? 'Starting…' : paused ? 'Paused' : 'Listening';
+  const statusLabel =
+    voice.phase === 'starting' ? 'Starting…'
+    : voice.phase === 'stopping' ? 'Stopping…'
+    : live ? 'Listening'
+    : paused ? 'Paused'
+    : 'Not listening';
 
   return (
     <SafeAreaView style={s.root}>
       <View style={s.bar}>
         <View style={s.rec} accessible accessibilityLabel={`${statusLabel}, ${mm} minutes ${ss} seconds`}>
-          <View style={[s.dot, paused && s.dotPaused]} />
+          <View style={[s.dot, !live && s.dotOff]} />
           <Text style={s.recText}>{statusLabel}</Text>
           <Text style={s.time}>
             {mm}:{ss}
           </Text>
         </View>
         <Btn
-          label={paused ? '▶ Resume' : '❚❚ Pause'}
-          accessibilityLabel={paused ? 'Resume listening' : 'Pause listening'}
-          variant={paused ? 'primary' : 'outline'}
-          disabled={t.status !== 'live' && !paused}
-          onPress={paused ? t.start : t.pause}
+          label={live ? '❚❚ Pause' : '▶ Resume'}
+          accessibilityLabel={live ? 'Pause listening' : 'Resume listening'}
+          variant={live ? 'outline' : 'primary'}
+          disabled={busy || ending || (!live && !paused)}
+          onPress={live ? pause : listen}
           style={{ minHeight: 48, paddingHorizontal: 14 }}
         />
       </View>
 
-      {paused && <Banner text="Horus isn’t listening. Nothing is being recorded." />}
-      {t.error && <Banner text="Not hearing anything. Check the microphone." action={{ label: 'Retry', onPress: t.start }} />}
+      {paused && !live && <Banner text="Horus isn’t listening. Nothing is being recorded." />}
+      {voice.unconfirmedAudio && (
+        <Banner
+          text="The last few seconds of audio may not have been captured."
+          action={{ label: 'Continue anyway', onPress: voice.acknowledgeUnconfirmedAudio }}
+        />
+      )}
+      {error && !voice.unconfirmedAudio && voice.phase === 'error' && (
+        <Banner text={`Not listening: ${error}`} action={{ label: 'Try again', onPress: listen }} />
+      )}
 
       <ScrollView contentContainerStyle={s.qs}>
         <Text style={s.h2} accessibilityRole="header">
           Ask your doctor
         </Text>
-        {active.length === 0 && answered.length === 0 && (
-          <Text style={s.empty}>Listening… questions will appear here.</Text>
-        )}
+        {active.length === 0 && answered.length === 0 && <Text style={s.empty}>Listening… questions will appear here.</Text>}
         {active.map((q, i) => (
-          <Animated.View key={q.id} layout={LinearTransition} entering={FadeIn} exiting={FadeOut} style={[s.q, i === 0 && s.qTop]}>
+          <Animated.View key={q.question_id} layout={LinearTransition} entering={FadeIn} exiting={FadeOut} style={[s.q, i === 0 && s.qTop]}>
             <View style={s.tagRow}>
               <Text style={[s.tag, i > 0 && { color: C.muted }]}>{i === 0 ? '● Ask next' : 'Also worth asking'}</Text>
-              {movedUp === q.id && <Text style={s.moved}>↑ Moved up</Text>}
+              {movedUp === q.question_id && <Text style={s.moved}>↑ Moved up</Text>}
             </View>
             <Text style={[s.qt, i === 0 && s.qtTop]}>{q.question}</Text>
-            {failed === q.id && <Text style={s.err}>Didn’t work, try again.</Text>}
             <View style={s.acts}>
+              {/* ponytail: local-only; suggestions are read-only to the app until an update-suggestion function exists */}
               <Btn
                 label="Dismiss"
                 accessibilityLabel={`Dismiss: ${q.question}`}
-                disabled={pending === q.id}
-                onPress={() => dismiss(q)}
+                onPress={() => setDismissed((d) => new Set(d).add(q.question_id))}
                 style={{ minHeight: 48 }}
               />
             </View>
           </Animated.View>
         ))}
         {answered.map((q) => (
-          <Animated.View key={`done-${q.id}`} layout={LinearTransition} entering={FadeIn} exiting={FadeOut} style={[s.q, s.qDone]}>
+          <Animated.View key={`done-${q.question_id}`} layout={LinearTransition} entering={FadeIn} exiting={FadeOut} style={[s.q, s.qDone]}>
             <Text style={[s.tag, { color: C.ok }]}>✓ You asked this</Text>
             <Text style={s.qtDone}>{q.question}</Text>
           </Animated.View>
@@ -168,7 +217,7 @@ export default function Live() {
       </ScrollView>
 
       <View style={s.foot}>
-        <Btn label={ending ? 'Ending…' : 'End consultation'} variant="ink" onPress={end} disabled={ending} />
+        <Btn label={ending ? 'Ending…' : 'End consultation'} variant="ink" onPress={end} disabled={ending || busy} />
       </View>
     </SafeAreaView>
   );
@@ -179,7 +228,7 @@ const s = StyleSheet.create({
   bar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingTop: 8, paddingBottom: 12 },
   rec: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   dot: { width: 12, height: 12, borderRadius: 6, backgroundColor: C.rec },
-  dotPaused: { backgroundColor: 'transparent', borderWidth: 3, borderColor: C.muted },
+  dotOff: { backgroundColor: 'transparent', borderWidth: 3, borderColor: C.muted },
   recText: { fontSize: 16, fontWeight: '600', color: C.ink },
   time: { fontSize: 16, fontWeight: '500', color: C.muted, fontVariant: ['tabular-nums'] },
   qs: { paddingHorizontal: 16, paddingBottom: 16, gap: 12 },
@@ -195,6 +244,5 @@ const s = StyleSheet.create({
   qtTop: { fontSize: 22, lineHeight: 29 },
   qtDone: { fontSize: 16, color: C.muted, textDecorationLine: 'line-through' },
   acts: { flexDirection: 'row', justifyContent: 'flex-end' },
-  err: { fontSize: 15, color: C.danger, fontWeight: '700', marginBottom: 8 },
   foot: { padding: 16 },
 });

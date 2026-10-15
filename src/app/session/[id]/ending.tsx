@@ -5,27 +5,34 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Banner } from '@/components/ui';
 import { C } from '@/constants/theme';
-import { finalizeSession } from '@/lib/api';
+import { finalizeConsultation, loadConsultation, subscribeToConsultation } from '@/lib/consultations';
 
 const TIMEOUT_MS = 60_000;
 
 export default function Ending() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const [stuck, setStuck] = useState(false);
-
   const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     let alive = true;
+    let unsubscribe: (() => void) | undefined;
     const timer = setTimeout(() => alive && setStuck(true), TIMEOUT_MS);
-    // finalize-session returns summary_id; fetch it directly rather than wait on summary.ready (spec).
-    finalizeSession(id)
-      .then(({ summary_id }) => alive && router.replace({ pathname: '/session/[id]/summary', params: { id, summaryId: summary_id } }))
-      .catch(() => alive && setStuck(true))
-      .finally(() => clearTimeout(timer));
+    const done = () => alive && router.replace(`/session/${id}/summary`);
+
+    // summary.ready = sessions UPDATE status=completed (types/consultation.ts).
+    subscribeToConsultation(id, {
+      onSession: (session) => session.status === 'completed' && done(),
+      onStatus: (status) => {
+        if (status === 'SUBSCRIBED') loadConsultation(id).then(({ session }) => session.status === 'completed' && done(), () => {});
+      },
+    }).then((u) => (alive ? (unsubscribe = u) : u()), () => alive && setStuck(true));
+    finalizeConsultation(id).catch(() => alive && setStuck(true));
+
     return () => {
       alive = false;
       clearTimeout(timer);
+      unsubscribe?.();
     };
   }, [id, attempt]);
 
@@ -37,9 +44,14 @@ export default function Ending() {
         </Text>
         <Text style={s.sub}>This usually takes under a minute.</Text>
         <Step done label="Transcript saved" />
-        <Step label="Writing the summary and checking every line against the transcript" />
+        <Step label="Writing the summary and checking it against the transcript" />
       </View>
-      {stuck && <Banner text="This is taking longer than usual. Your transcript is saved." action={{ label: 'Try again', onPress: () => (setStuck(false), setAttempt((a) => a + 1)) }} />}
+      {stuck && (
+        <Banner
+          text="This is taking longer than usual. Your transcript is saved."
+          action={{ label: 'Try again', onPress: () => (setStuck(false), setAttempt((a) => a + 1)) }}
+        />
+      )}
     </SafeAreaView>
   );
 }

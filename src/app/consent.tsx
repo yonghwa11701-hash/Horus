@@ -1,26 +1,32 @@
+import { randomUUID } from 'expo-crypto';
 import { router } from 'expo-router';
+import { usePreventRemove } from 'expo-router/react-navigation';
 import { useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Btn } from '@/components/ui';
 import { C } from '@/constants/theme';
-import { createSession } from '@/lib/api';
+import { createConsultation } from '@/lib/consultations';
 
 // Shown before every consultation: each appointment may be a different doctor (CLAUDE.md §2).
 export default function Consent() {
+  const [sessionId] = useState(() => randomUUID()); // reused on retry so a retry is the same consultation
   const [agreed, setAgreed] = useState(false);
   const [pending, setPending] = useState(false);
-  const [failed, setFailed] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Leaving mid-request would let the pending result open Live anyway.
+  usePreventRemove(pending, () => {});
 
   async function start() {
     setPending(true);
-    setFailed(false);
+    setError(null);
     try {
-      const { session_id } = await createSession();
-      router.replace(`/session/${session_id}`);
-    } catch {
-      setFailed(true);
+      await createConsultation(agreed, sessionId);
+      router.replace(`/session/${sessionId}`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Couldn’t start. Try again.');
       setPending(false);
     }
   }
@@ -38,7 +44,8 @@ export default function Consent() {
 
         <Pressable
           accessibilityRole="checkbox"
-          accessibilityState={{ checked: agreed }}
+          accessibilityState={{ checked: agreed, disabled: pending }}
+          disabled={pending}
           onPress={() => setAgreed((a) => !a)}
           style={[s.check, agreed && s.checkOn]}>
           <View style={[s.box, agreed && s.boxOn]}>{agreed && <Text style={s.tick}>✓</Text>}</View>
@@ -47,7 +54,7 @@ export default function Consent() {
       </ScrollView>
 
       <View style={s.foot}>
-        {failed && <Text style={s.err}>Couldn’t start. Try again.</Text>}
+        {error && <Text style={s.err}>{error}</Text>}
         <Btn
           label={pending ? 'Starting…' : '● Start listening'}
           accessibilityLabel="Start listening"
@@ -56,7 +63,7 @@ export default function Consent() {
           onPress={start}
           style={{ minHeight: 60 }}
         />
-        <Btn label="Back" onPress={() => router.back()} />
+        <Btn label="Back" disabled={pending} onPress={() => router.back()} />
       </View>
     </SafeAreaView>
   );
