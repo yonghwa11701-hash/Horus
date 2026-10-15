@@ -44,3 +44,12 @@ verify_jwt = false
 
 [functions.discard-session]
 verify_jwt = false
+
+# Agent pipeline (Person 3). Prompt files are read at runtime, so they ship with each function.
+[functions.process-segment]
+verify_jwt = false
+static_files = ["./functions/_shared/prompts/*.md"]
+
+[functions.finalize-session]
+verify_jwt = false
+static_files = ["./functions/_shared/prompts/*.md"]

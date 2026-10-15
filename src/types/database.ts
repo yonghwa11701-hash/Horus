@@ -68,6 +68,14 @@ export type Database = {
         schema_version: number;
         created_at: string;
       }, 'session_id' | 'kind' | 'storage_path'>;
+      consultation_memory: Table<{
+        session_id: string;
+        understanding: Json | null;
+        questions: Json;
+        lock_id: string | null;
+        locked_until: string | null;
+        updated_at: string;
+      }, 'session_id'>;
     };
     Views: { [_ in never]: never };
     Functions: {
@@ -94,6 +102,10 @@ export type Database = {
       reserve_scribe_token: {
         Args: { p_session_id: string };
         Returns: undefined;
+      };
+      claim_agent_memory: {
+        Args: { p_session_id: string; p_lock_id: string; p_lease_seconds: number };
+        Returns: Database['public']['Tables']['consultation_memory']['Row'][];
       };
       complete_consultation: {
         Args: { p_session_id: string };

@@ -87,7 +87,7 @@ Web agent timeline (laptop) ◀──── Supabase Realtime (agent_events)
 ```
 
 - Each Claude call happens inside a **short-lived** Edge Function request, never one function running for the whole appointment (hosted Edge Functions have execution time limits).
-- `process-segment` is triggered either by the app after inserting a segment, or by a database webhook on `transcript_segments` insert. **Angelika decides; record the decision here.**
+- `process-segment` is triggered by `append-transcript` after each segment is saved (`ENABLE_AGENT_DISPATCH=true`). It runs in the background, one worker per session (lease in `consultation_memory`), and processes all unprocessed segments in order. Failed segments are retried by resubmitting them (`retryPendingSegments`).
 
 ### 5.1 Critical dependency: real-time mic streaming in React Native
 ElevenLabs' client SDKs target the browser and React; React Native is not documented. Streaming raw PCM16 from
