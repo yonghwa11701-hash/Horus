@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from 'npm:zod@4.1.12';
 import type { Database } from '../../../src/types/database.ts';
 
 export const sessionRequest = z.object({ session_id: z.uuid() }).strict();

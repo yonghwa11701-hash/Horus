@@ -1,5 +1,5 @@
-import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-import { z } from 'zod';
+import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2.117.3';
+import { z } from 'npm:zod@4.1.12';
 import type { Database } from '../../../src/types/database.ts';
 
 export class ApiError extends Error {

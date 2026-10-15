@@ -1,4 +1,4 @@
-import type { SupabaseClient } from '@supabase/supabase-js';
+import type { SupabaseClient } from 'npm:@supabase/supabase-js@2.117.3';
 import type { Database, Json } from '../../../src/types/database.ts';
 import { ApiError, databaseError } from './http.ts';
 
