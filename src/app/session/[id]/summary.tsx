@@ -120,7 +120,7 @@ export default function SummaryScreen() {
       </ScrollView>
 
       <View style={s.foot}>
-        <Btn label="Done" onPress={done} />
+        <Btn label="Done" variant="primary" onPress={done} />
         <Pressable accessibilityRole="button" onPress={del} disabled={deleting} hitSlop={8} style={s.del}>
           <Text style={s.delText}>{deleting ? 'Deleting…' : 'Delete this appointment'}</Text>
         </Pressable>
