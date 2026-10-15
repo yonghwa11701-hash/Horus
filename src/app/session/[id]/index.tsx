@@ -2,7 +2,7 @@ import * as Haptics from 'expo-haptics';
 import { router, useLocalSearchParams } from 'expo-router';
 import { usePreventRemove } from 'expo-router/react-navigation';
 import { useEffect, useRef, useState } from 'react';
-import { AccessibilityInfo, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { AccessibilityInfo, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeIn, FadeOut, LinearTransition } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -63,11 +63,13 @@ export default function Live() {
 
   function listen() {
     setError(null);
-    voice.start().then(() => setPaused(false), () => {});
+    voice.start().then(() => setPaused(false), (e) => setError(e instanceof Error ? e.message : 'Could not start listening.'));
   }
 
   useEffect(() => {
-    voice.start().catch(() => {});
+    // Browsers require a direct microphone tap; mounting after the consent/API
+    // navigation is no longer a user gesture. Native keeps the automatic start.
+    if (Platform.OS !== 'web') voice.start().catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -128,15 +130,17 @@ export default function Live() {
     try {
       await voice.pause();
       setPaused(true);
-    } catch {}
+    } catch (e) { setError(e instanceof Error ? e.message : 'Could not pause listening.'); }
   }
 
   async function end() {
+    setError(null);
     setEnding(true);
     try {
       await voice.end();
       router.replace(`/session/${id}/ending`);
-    } catch {
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not finish saving. Retry End consultation.');
       setEnding(false);
     }
   }
@@ -165,10 +169,10 @@ export default function Live() {
           </Text>
         </View>
         <Btn
-          label={live ? '❚❚ Pause' : '▶ Resume'}
-          accessibilityLabel={live ? 'Pause listening' : 'Resume listening'}
+          label={live ? '❚❚ Pause' : paused ? '▶ Resume' : '▶ Start'}
+          accessibilityLabel={live ? 'Pause listening' : paused ? 'Resume listening' : 'Start microphone'}
           variant={live ? 'outline' : 'primary'}
-          disabled={busy || ending || (!live && !paused)}
+          disabled={busy || ending || voice.unconfirmedAudio}
           onPress={live ? pause : listen}
           style={{ minHeight: 48, paddingHorizontal: 14 }}
         />
@@ -181,15 +185,15 @@ export default function Live() {
           action={{ label: 'Continue anyway', onPress: voice.acknowledgeUnconfirmedAudio }}
         />
       )}
-      {error && !voice.unconfirmedAudio && voice.phase === 'error' && (
-        <Banner text={`Not listening: ${error}`} action={{ label: 'Try again', onPress: listen }} />
+      {error && !voice.unconfirmedAudio && (
+        <Banner text={error} action={voice.phase === 'error' ? { label: 'Try again', onPress: listen } : undefined} />
       )}
 
       <ScrollView contentContainerStyle={s.qs}>
         <Text style={s.h2} accessibilityRole="header">
           Ask your doctor
         </Text>
-        {active.length === 0 && answered.length === 0 && <Text style={s.empty}>Listening… questions will appear here.</Text>}
+        {active.length === 0 && answered.length === 0 && <Text style={s.empty}>{live ? 'Listening… questions will appear here.' : busy ? 'Connecting microphone…' : 'Start listening to see suggested questions.'}</Text>}
         {active.map((q, i) => (
           <Animated.View key={q.question_id} layout={LinearTransition} entering={FadeIn} exiting={FadeOut} style={[s.q, i === 0 && s.qTop]}>
             <View style={s.tagRow}>
