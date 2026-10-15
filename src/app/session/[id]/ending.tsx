@@ -5,19 +5,28 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Banner } from '@/components/ui';
 import { C } from '@/constants/theme';
-import { finalizeConsultation, loadConsultation, subscribeToConsultation } from '@/lib/consultations';
+import { ConsultationApiError, finalizeConsultation, loadConsultation, subscribeToConsultation } from '@/lib/consultations';
 
 const TIMEOUT_MS = 60_000;
+const SLOW = 'This is taking longer than usual. Your transcript is saved.';
+
+function failureText(e: unknown) {
+  // Browsers report an undeployed function as unreachable (failed CORS preflight), native as not deployed.
+  if (e instanceof ConsultationApiError && (e.code === 'function_not_deployed' || e.code === 'service_unreachable')) {
+    return 'The summary service isn’t available right now. Your transcript is saved.';
+  }
+  return `Couldn’t write the summary: ${e instanceof Error ? e.message : String(e)} Your transcript is saved.`;
+}
 
 export default function Ending() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const [stuck, setStuck] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     let alive = true;
     let unsubscribe: (() => void) | undefined;
-    const timer = setTimeout(() => alive && setStuck(true), TIMEOUT_MS);
+    const timer = setTimeout(() => alive && setProblem(SLOW), TIMEOUT_MS);
     const done = () => alive && router.replace(`/session/${id}/summary`);
 
     // summary.ready = sessions UPDATE status=completed (types/consultation.ts).
@@ -26,8 +35,8 @@ export default function Ending() {
       onStatus: (status) => {
         if (status === 'SUBSCRIBED') loadConsultation(id).then(({ session }) => session.status === 'completed' && done(), () => {});
       },
-    }).then((u) => (alive ? (unsubscribe = u) : u()), () => alive && setStuck(true));
-    finalizeConsultation(id).catch(() => alive && setStuck(true));
+    }).then((u) => (alive ? (unsubscribe = u) : u()), (e) => alive && setProblem(failureText(e)));
+    finalizeConsultation(id).catch((e) => alive && setProblem(failureText(e)));
 
     return () => {
       alive = false;
@@ -46,10 +55,10 @@ export default function Ending() {
         <Step done label="Transcript saved" />
         <Step label="Writing the summary and checking it against the transcript" />
       </View>
-      {stuck && (
+      {problem && (
         <Banner
-          text="This is taking longer than usual. Your transcript is saved."
-          action={{ label: 'Try again', onPress: () => (setStuck(false), setAttempt((a) => a + 1)) }}
+          text={problem}
+          action={{ label: 'Try again', onPress: () => (setProblem(null), setAttempt((a) => a + 1)) }}
         />
       )}
     </SafeAreaView>
