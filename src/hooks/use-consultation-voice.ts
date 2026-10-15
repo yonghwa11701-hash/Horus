@@ -182,8 +182,8 @@ export function useConsultationVoice(options: Options) {
     busy.current = true;
     setPhase('stopping');
     voiceDebug('stop', { stage: 'voice', outcome: 'requested' });
-    microphone.stop();
     try {
+      microphone.stop();
       if (connection.current) {
         try { await connection.current.finish(); }
         catch (error) { markUnconfirmed(); throw error; }
@@ -211,11 +211,11 @@ export function useConsultationVoice(options: Options) {
   const discard = useCallback(async () => {
     if (busy.current) throw new Error('Wait for the current voice operation to finish.');
     busy.current = true;
-    microphone.stop();
-    connection.current?.close();
-    connection.current = null;
-    queue.current = [];
     try {
+      microphone.stop();
+      connection.current?.close();
+      connection.current = null;
+      queue.current = [];
       await draining.current?.catch(() => {});
       await discardConsultation(options.sessionId);
       voiceDebug('discard', { outcome: 'success' });
