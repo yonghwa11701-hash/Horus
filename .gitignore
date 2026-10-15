@@ -30,8 +30,15 @@ yarn-error.*
 .DS_Store
 *.pem
 
-# local env files
+# Secrets stay local; examples contain placeholders only.
+.env
+.env.*
+!.env.example
 .env*.local
+
+# Supabase local state
+supabase/.temp/
+supabase/.branches/
 
 # typescript
 *.tsbuildinfo
