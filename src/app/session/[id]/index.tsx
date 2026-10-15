@@ -1,7 +1,7 @@
 import * as Haptics from 'expo-haptics';
 import { Redirect, router, useLocalSearchParams } from 'expo-router';
 import { usePreventRemove } from 'expo-router/react-navigation';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AccessibilityInfo, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeIn, FadeOut, LinearTransition } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -15,12 +15,9 @@ import type { Suggestion, TranscriptSegment } from '@/types/consultation';
 
 const RANK = { critical: 0, high: 1, medium: 2, low: 3 } as const;
 const MAX_CARDS = 3; // CLAUDE.md §3
-const SHOW_ANSWERED_MS = 3000;
 const MOVED_UP_MS = 3000;
 
 type Rows = Map<string, Suggestion>;
-
-const isUrgent = (q: Suggestion) => q.priority === 'critical' || q.priority === 'high';
 
 /** Highest priority first, newest first within a priority. */
 function rankActive(rows: Rows, dismissed: Set<string>) {
@@ -63,13 +60,13 @@ function Live({ id }: { id: string }) {
   });
   const [rows, setRows] = useState<Rows>(new Map());
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
-  const [answered, setAnswered] = useState<Suggestion[]>([]);
   const [movedUp, setMovedUp] = useState<string | null>(null);
   const [paused, setPaused] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [ending, setEnding] = useState(false);
   const [showTranscript, setShowTranscript] = useState(false);
   const rowsRef = useRef<Rows>(rows);
+  const seenQuestions = useRef(new Set<string>());
   const dismissedRef = useRef(dismissed);
   const pausedRef = useRef(paused);
   useEffect(() => {
@@ -107,12 +104,6 @@ function Live({ id }: { id: string }) {
       const after = rankActive(next, dismissedRef.current);
       const beforeIds = new Set(before.map((q) => q.question_id));
 
-      const justAnswered = incoming.filter((q) => q.status === 'resolved' && beforeIds.has(q.question_id));
-      if (justAnswered.length) {
-        setAnswered((a) => [...a, ...justAnswered]);
-        setTimeout(() => setAnswered((a) => a.filter((q) => !justAnswered.includes(q))), SHOW_ANSWERED_MS);
-      }
-
       const top = after[0];
       if (top && top.question_id !== before[0]?.question_id) {
         if (beforeIds.has(top.question_id)) {
@@ -122,9 +113,6 @@ function Live({ id }: { id: string }) {
         // Paused: cards still update, but no buzz and no announcement (spec).
         if (!pausedRef.current) AccessibilityInfo.announceForAccessibility(`New top question: ${top.question}`);
       }
-      const newUrgent = after.some((q) => isUrgent(q) && !before.some((b) => b.question_id === q.question_id && isUrgent(b)));
-      if (newUrgent && !pausedRef.current) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-
       rowsRef.current = next;
       setRows(next);
     }
@@ -174,7 +162,23 @@ function Live({ id }: { id: string }) {
   // Android back / swipe-back must not silently end the recording.
   usePreventRemove(!ending, () => confirm('End consultation?', 'Horus will stop listening and write your summary.', 'End', end));
 
-  const active = rankActive(rows, dismissed);
+  function hideQuestion(questionId: string) {
+    const next = new Set(dismissedRef.current).add(questionId);
+    dismissedRef.current = next;
+    setDismissed(next);
+  }
+
+  const active = useMemo(() => rankActive(rows, dismissed), [rows, dismissed]);
+  useEffect(() => {
+    const appeared = active.some((q) => !seenQuestions.current.has(q.question_id));
+    active.forEach((q) => seenQuestions.current.add(q.question_id));
+    if (!appeared || paused || ending) return;
+    // Every newly visible question, not only urgent ones. Replays/reordering must not buzz again.
+    const pulse = Platform.OS === 'android'
+      ? Haptics.performAndroidHapticsAsync(Haptics.AndroidHaptics.Confirm)
+      : Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    void pulse.catch(() => {}); // Unsupported/disabled haptics must never interrupt the consultation.
+  }, [active, paused, ending]);
   const mm = String(Math.floor(elapsed / 60)).padStart(2, '0');
   const ss = String(elapsed % 60).padStart(2, '0');
   const statusLabel =
@@ -232,7 +236,7 @@ function Live({ id }: { id: string }) {
             <Btn label="● Start listening" variant="primary" onPress={listen} style={{ minHeight: 64 }} />
           </View>
         )}
-        {!notStarted && active.length === 0 && answered.length === 0 && <Text style={s.empty}>{live ? 'Listening… questions will appear here.' : busy ? 'Connecting microphone…' : 'Start listening to see suggested questions.'}</Text>}
+        {!notStarted && active.length === 0 && <Text style={s.empty}>{live ? 'Listening… questions will appear here.' : busy ? 'Connecting microphone…' : 'Start listening to see suggested questions.'}</Text>}
         {active.map((q, i) => (
           <Animated.View key={q.question_id} layout={LinearTransition} entering={FadeIn} exiting={FadeOut} style={[s.q, i === 0 && s.qTop]}>
             <View style={s.tagRow}>
@@ -241,20 +245,13 @@ function Live({ id }: { id: string }) {
             </View>
             <Text style={[s.qt, i === 0 && s.qtTop]}>{q.question}</Text>
             <View style={s.acts}>
-              {/* ponytail: local-only; suggestions are read-only to the app until an update-suggestion function exists */}
               <Btn
                 label="Dismiss"
                 accessibilityLabel={`Dismiss: ${q.question}`}
-                onPress={() => setDismissed((d) => new Set(d).add(q.question_id))}
+                onPress={() => hideQuestion(q.question_id)}
                 style={{ minHeight: 48 }}
               />
             </View>
-          </Animated.View>
-        ))}
-        {answered.map((q) => (
-          <Animated.View key={`done-${q.question_id}`} layout={LinearTransition} entering={FadeIn} exiting={FadeOut} style={[s.q, s.qDone]}>
-            <Text style={[s.tag, { color: C.ok }]}>✓ You asked this</Text>
-            <Text style={s.qtDone}>{q.question}</Text>
           </Animated.View>
         ))}
       </ScrollView>
@@ -341,13 +338,11 @@ const s = StyleSheet.create({
   empty: { fontSize: 17, color: C.muted, lineHeight: 24 },
   q: { borderWidth: 2, borderColor: C.line, borderRadius: 12, padding: 14 },
   qTop: { borderWidth: 3, borderColor: C.primary, backgroundColor: C.primaryTint },
-  qDone: { borderStyle: 'dashed', paddingVertical: 10 },
   tagRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 },
   tag: { fontSize: 14, fontWeight: '700', color: C.primary },
   moved: { fontSize: 13, fontWeight: '700', color: C.ink, backgroundColor: '#fff', borderWidth: 1, borderColor: C.line, borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 },
   qt: { fontSize: 20, fontWeight: '700', lineHeight: 26, color: C.ink, marginBottom: 12 },
   qtTop: { fontSize: 22, lineHeight: 29 },
-  qtDone: { fontSize: 16, color: C.muted, textDecorationLine: 'line-through' },
   acts: { flexDirection: 'row', justifyContent: 'flex-end' },
   foot: { padding: 16 },
 });
