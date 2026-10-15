@@ -10,6 +10,11 @@ export const REVIEW_MODEL = Deno.env.get('REVIEW_MODEL') ?? 'claude-sonnet-5-5';
 let client: Anthropic | undefined;
 const prompts = new Map<string, string>();
 
+// Check configuration before scheduling background work, without exposing the key.
+export function assertAgentConfigured(): void {
+  env('ANTHROPIC_API_KEY');
+}
+
 // Prompt files ship with each function through `static_files` in supabase/config.toml.
 async function systemPrompt(file: string) {
   let text = prompts.get(file);
@@ -36,7 +41,21 @@ export async function callAgent<T>(
       output_config: { effort: 'medium' },
       // Sonnet 5.5 safeguards can decline medical text; let the API reroute instead of failing.
       ...(model.startsWith('claude-sonnet-5-5') ? { betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' } : {}),
-    } as Anthropic.Beta.MessageCreateParamsNonStreaming, { signal });
+    } as Anthropic.Beta.MessageCreateParamsNonStreaming, { signal }).catch((error: unknown) => {
+      // Provider exceptions can carry prompts/headers. Expose only static diagnoses.
+      if (error instanceof Anthropic.APIError) {
+        if (error.status === 401 || error.status === 403) {
+          throw new ApiError(503, 'agent_authentication_failed', 'The server Claude credential was rejected');
+        }
+        if (error.status === 404) {
+          throw new ApiError(503, 'agent_model_unavailable', 'The configured Claude model is unavailable; check AGENT_MODEL and REVIEW_MODEL');
+        }
+        if (error.status === 429) throw new ApiError(503, 'agent_rate_limited', 'Claude is temporarily rate limited; try again shortly');
+        if (error.status === 400) throw new ApiError(502, 'agent_request_invalid', 'Claude rejected the agent configuration');
+        throw new ApiError(502, 'agent_provider_unavailable', 'The Claude service could not complete the request');
+      }
+      throw error;
+    });
     if (response.stop_reason === 'refusal') throw new ApiError(502, 'agent_refused', 'An agent declined the request');
     const text = response.content.flatMap((block) => (block.type === 'text' ? [block.text] : [])).join('');
     try {

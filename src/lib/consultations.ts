@@ -3,6 +3,7 @@ import { randomUUID } from 'expo-crypto';
 import { ensureAnonymousSession, getSupabase } from './supabase';
 import { voiceDebug } from './voice/debug';
 import { isConsultationId } from './consultation-state';
+import { createSessionFinalizer } from './finalization';
 import { API_ACCEPT, PATIENT_ARTIFACTS_BUCKET } from '@/types/consultation';
 import type {
   ArtifactEnvelope, FinalTranscriptInput, Session, SessionArtifact,
@@ -70,8 +71,11 @@ export const setSessionStatus = (sessionId: string, status: SessionTransition) =
   invokeVoiceFunction('update-session', { session_id: sessionId, status });
 export const discardConsultation = (sessionId: string) => invokeVoiceFunction('discard-session', { session_id: sessionId });
 
-// Person 3 owns this implementation. Call only after voice.stop() and update-session ending.
-export const finalizeConsultation = (sessionId: string) => invoke<unknown>('finalize-session', { session_id: sessionId });
+// Call only after voice.stop() and update-session ending. Busy agent leases are
+// retried for a bounded period; concurrent callers share one finalization per session.
+export const finalizeConsultation = createSessionFinalizer(
+  (sessionId) => invoke<unknown>('finalize-session', { session_id: sessionId }),
+);
 
 export async function loadConsultation(sessionId: string) {
   await ensureAnonymousSession();

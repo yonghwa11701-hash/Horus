@@ -25,9 +25,15 @@ export default function Ending() {
 
   useEffect(() => {
     let alive = true;
+    let finished = false;
     let unsubscribe: (() => void) | undefined;
-    const timer = setTimeout(() => alive && setProblem(SLOW), TIMEOUT_MS);
-    const done = () => alive && router.replace(`/session/${id}/summary`);
+    const timer = setTimeout(() => alive && !finished && setProblem(SLOW), TIMEOUT_MS);
+    const done = () => {
+      if (!alive || finished) return;
+      finished = true;
+      clearTimeout(timer);
+      router.replace(`/session/${id}/summary`);
+    };
 
     // summary.ready = sessions UPDATE status=completed (types/consultation.ts).
     subscribeToConsultation(id, {
@@ -36,7 +42,8 @@ export default function Ending() {
         if (status === 'SUBSCRIBED') loadConsultation(id).then(({ session }) => session.status === 'completed' && done(), () => {});
       },
     }).then((u) => (alive ? (unsubscribe = u) : u()), (e) => alive && setProblem(failureText(e)));
-    finalizeConsultation(id).catch((e) => alive && setProblem(failureText(e)));
+    // Successful finalization confirms completion even if its Realtime event is missed.
+    finalizeConsultation(id).then(done, (e) => alive && !finished && setProblem(failureText(e)));
 
     return () => {
       alive = false;
