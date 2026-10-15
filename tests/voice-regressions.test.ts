@@ -2,9 +2,10 @@
 // No network, Expo runtime, or provider credentials are used.
 import assert from 'node:assert/strict';
 import { test, type TestContext } from 'node:test';
-import { ScribeConnection, type ScribeFinal } from '../src/lib/voice/scribe.ts';
-import { replayConsultationEvents } from '../src/lib/consultation-state.ts';
+import { ScribeConnection, type ScribeDiagnostics, type ScribeFinal } from '../src/lib/voice/scribe.ts';
+import { isConsultationId, replayConsultationEvents } from '../src/lib/consultation-state.ts';
 import type { Session, Suggestion, TranscriptSegment } from '../src/types/consultation.ts';
+import { validationMessage } from '../supabase/functions/_shared/validation-errors.ts';
 
 class FakeSocket {
   static instances: FakeSocket[] = [];
@@ -24,14 +25,16 @@ async function connect(t: TestContext) {
   t.mock.method(globalThis, 'WebSocket', FakeSocket as unknown as typeof WebSocket);
   const finals: ScribeFinal[] = [];
   const errors: Error[] = [];
+  const events: { metrics: ScribeDiagnostics; text_chars: number }[] = [];
   const connection = new ScribeConnection({
     onPartial: () => {}, onFinal: (row) => finals.push(row), onError: (error) => errors.push(error),
+    onEvent: (metrics, text_chars) => events.push({ metrics, text_chars }),
   }, 0);
   const starting = connection.connect('synthetic-single-use-token');
   const socket = FakeSocket.instances.at(-1)!;
   socket.emit({ message_type: 'session_started' });
   await starting;
-  return { connection, socket, finals, errors };
+  return { connection, socket, finals, errors, events };
 }
 function audio(frames: number) {
   return { data: new Float32Array(frames).buffer, sampleRate: 16000, channels: 1, encoding: 'float32' as const };
@@ -41,13 +44,41 @@ function commit(socket: FakeSocket, text: string) {
     words: text ? [{ start: 0, end: 0.5 }] : [] });
 }
 
+test('validation feedback exposes fixed field names/codes, not submitted data or unknown keys', () => {
+  const issues = [
+    { path: ['session_id'], code: 'invalid_type', message: 'sensitive-id', input: 'sensitive-id' },
+    { path: ['status'], code: 'invalid_value', message: 'sensitive-status' },
+    { path: [], code: 'unrecognized_keys', keys: ['sensitive-key'] },
+    { path: ['sensitive-field'], code: 'sensitive-code' },
+  ];
+  assert.equal(validationMessage(issues), 'Request fields are invalid (session_id: invalid_type; status: invalid_value; body: unrecognized_keys; body: invalid)');
+  assert.doesNotMatch(validationMessage(issues), /sensitive/);
+  assert.equal(validationMessage([]), 'Request fields are invalid');
+  assert.ok(validationMessage(Array(1000).fill(issues[0])).length < 200);
+});
+
+test('consultation UUID boundary rejects missing, array and literal dynamic-route values', () => {
+  for (const value of [undefined, null, '', 'undefined', '[id]', 'session/[id]', 'not-a-uuid', [], ['abcdef01-2345-4678-9abc-def012345678'], {}]) {
+    assert.equal(isConsultationId(value), false);
+  }
+  for (const value of ['abcdef01-2345-4678-9abc-def012345678', 'ABCDEF01-2345-4678-9ABC-DEF012345678', '01998b60-0000-7000-8000-000000000001', '00000000-0000-0000-0000-000000000000', 'ffffffff-ffff-ffff-ffff-ffffffffffff']) {
+    assert.equal(isConsultationId(value), true);
+  }
+  assert.equal(isConsultationId('abcdef01-2345-0678-9abc-def012345678'), false, 'Unsupported UUID version');
+  assert.equal(isConsultationId('abcdef01-2345-4678-0abc-def012345678'), false, 'Invalid UUID variant');
+});
+
 // The real resampler + transport state machine are exercised; only the external socket is fake.
 test('finish waits for an earlier commit AND a separately acknowledged buffered tail', async (t) => {
   const { connection, socket, finals } = await connect(t);
   assert.equal(new URL(socket.url).searchParams.get('commit_strategy'), 'manual');
+  assert.equal(connection.diagnostics.connected, true);
+  assert.equal(connection.diagnostics.last_event, 'session_started');
   connection.send(audio(80001)); // Five seconds start the first manual commit.
   connection.send(audio(16000)); // Audio captured while that commit is in flight is held locally.
   assert.equal(socket.sent.filter((packet) => packet.commit).length, 1);
+  assert.equal(connection.diagnostics.sent_ms, 5100);
+  assert.equal(connection.diagnostics.buffered_ms, 1000);
   let finished = false;
   const finishing = connection.finish().then(() => { finished = true; });
   commit(socket, 'Earlier words');
@@ -60,6 +91,28 @@ test('finish waits for an earlier commit AND a separately acknowledged buffered 
   await finishing;
   assert.equal(connection.hasUnconfirmedAudio, false, 'Trailing silence is covered by the acknowledged boundary');
   assert.deepEqual(finals.map((row) => row.text), ['Earlier words', 'Final words']);
+  assert.equal(connection.diagnostics.commit_confirmations, 2);
+  assert.equal(connection.diagnostics.connected, false);
+});
+
+test('provider error code is visible without exposing provider error body', async (t) => {
+  const { connection, socket, errors } = await connect(t);
+  socket.emit({ message_type: 'quota_exceeded', error: 'synthetic sensitive request details' });
+  assert.match(errors[0].message, /quota_exceeded/);
+  assert.doesNotMatch(errors[0].message, /sensitive request/);
+  assert.equal(connection.diagnostics.last_event, 'quota_exceeded');
+  assert.equal(connection.diagnostics.connected, false);
+});
+
+test('event diagnostics retain input strength and character counts without transcript content', async (t) => {
+  const { connection, socket, events } = await connect(t);
+  connection.send({ ...audio(16001), data: new Float32Array(16001).fill(0.25).buffer });
+  socket.emit({ message_type: 'partial_transcript', text: 'Synthetic private words' });
+  assert.equal(connection.diagnostics.pcm_peak_percent, 25);
+  assert.equal(events.at(-1)?.text_chars, 'Synthetic private words'.length);
+  assert.doesNotMatch(JSON.stringify(events), /Synthetic private words/);
+  connection.close();
+  assert.equal(connection.diagnostics.pcm_peak_percent, 25, 'Signal peak remains visible after stopping');
 });
 
 test('missing confirmation fails even without a partial; repeated finish cannot bypass the failure', async (t) => {

@@ -2,10 +2,26 @@ import { fromByteArray } from 'base64-js';
 import { Pcm16Resampler, type MicrophoneBuffer } from './pcm.ts';
 
 export type ScribeFinal = { text: string; start_ms: number; end_ms: number };
+export type ScribeDiagnostics = {
+  connected: boolean;
+  sent_ms: number;
+  buffered_ms: number;
+  commit_requests: number;
+  commit_confirmations: number;
+  partial_events: number;
+  final_events: number;
+  last_event: string;
+  pcm_peak_percent: number;
+};
+export const EMPTY_SCRIBE_DIAGNOSTICS: ScribeDiagnostics = {
+  connected: false, sent_ms: 0, buffered_ms: 0, commit_requests: 0,
+  commit_confirmations: 0, partial_events: 0, final_events: 0, last_event: 'not_connected', pcm_peak_percent: 0,
+};
 type Callbacks = {
   onPartial: (text: string) => void;
   onFinal: (segment: ScribeFinal) => void;
   onError: (error: Error) => void;
+  onEvent?: (diagnostics: ScribeDiagnostics, textCharacters: number) => void;
 };
 type PendingCommit = {
   boundary: number;
@@ -33,6 +49,12 @@ export class ScribeConnection {
   private cancelConnect?: () => void;
   private callbacks: Callbacks;
   private offsetMs: number;
+  private commitRequests = 0;
+  private commitConfirmations = 0;
+  private partialEvents = 0;
+  private finalEvents = 0;
+  private lastEvent = 'not_connected';
+  private pcmPeak = 0;
 
   constructor(callbacks: Callbacks, offsetMs: number) {
     this.callbacks = callbacks;
@@ -40,6 +62,15 @@ export class ScribeConnection {
   }
 
   get hasUnconfirmedAudio() { return this.sentSamples > this.confirmedSamples || this.queuedBytes > 0; }
+
+  get diagnostics(): ScribeDiagnostics {
+    return {
+      connected: this.ready, sent_ms: Math.round(this.sentSamples / 16), buffered_ms: this.closing ? 0 : Math.round(this.queuedBytes / 32),
+      commit_requests: this.commitRequests, commit_confirmations: this.commitConfirmations,
+      partial_events: this.partialEvents, final_events: this.finalEvents, last_event: this.lastEvent,
+      pcm_peak_percent: Math.round(this.pcmPeak * 10000) / 100,
+    };
+  }
 
   async connect(token: string): Promise<void> {
     if (this.socket || this.closing) throw new Error('Create a fresh transcription connection to reconnect.');
@@ -49,6 +80,7 @@ export class ScribeConnection {
       token, model_id: 'scribe_v2_realtime', audio_format: 'pcm_16000',
       commit_strategy: 'manual', include_timestamps: 'true',
     });
+    this.lastEvent = 'connecting';
     const socket = new WebSocket(`wss://api.elevenlabs.io/v1/speech-to-text/realtime?${query}`);
     this.socket = socket;
     await new Promise<void>((resolve, reject) => {
@@ -56,7 +88,7 @@ export class ScribeConnection {
         reject(new Error('Transcription connection timed out.'));
         this.close();
       }, 15000);
-      this.cancelConnect = () => { clearTimeout(timer); reject(new Error('Transcription connection cancelled.')); };
+      this.cancelConnect = () => { clearTimeout(timer); reject(this.failure ?? new Error('Transcription connection cancelled.')); };
       socket.onmessage = (event) => {
         let message: Record<string, unknown>;
         try {
@@ -65,19 +97,25 @@ export class ScribeConnection {
           message = parsed as Record<string, unknown>;
         } catch { this.fail(new Error('Transcription returned an invalid message.')); return; }
         if (this.closing) return;
+        const eventType = typeof message.message_type === 'string' && /^[a-z_]{1,64}$/.test(message.message_type)
+          ? message.message_type : 'unknown_event';
+        this.lastEvent = eventType;
         if (message.message_type === 'session_started') {
           clearTimeout(timer);
           this.cancelConnect = undefined;
           this.ready = true;
           resolve();
         } else if (message.message_type === 'partial_transcript' && typeof message.text === 'string') {
+          this.partialEvents++;
           this.callbacks.onPartial(message.text);
         } else if (message.message_type === 'committed_transcript_with_timestamps' && typeof message.text === 'string') {
           this.confirmCommit(message);
         } else if ('error' in message || String(message.message_type).endsWith('_error')) {
-          this.fail(new Error('Transcription stopped. Check microphone access, connectivity and provider quota.'));
+          this.fail(new Error(`Transcription provider returned ${eventType}. Check ElevenLabs permissions, connectivity and provider quota.`));
         }
-        // Plain committed_transcript is paired with the timestamped event; ignore it.
+        // Plain committed_transcript is paired with the timestamped event; ignore it for persistence.
+        // Report counts/lengths only, never the message body or its transcript text.
+        this.callbacks.onEvent?.(this.diagnostics, typeof message.text === 'string' ? message.text.trim().length : 0);
       };
       socket.onerror = () => this.fail(new Error('Could not connect to the transcription service.'));
       socket.onclose = () => {
@@ -119,6 +157,10 @@ export class ScribeConnection {
     this.socket.send(JSON.stringify({
       message_type: 'input_audio_chunk', audio_base_64: fromByteArray(bytes), commit, sample_rate: 16000,
     }));
+    const pcm = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    for (let offset = 0; offset < bytes.length; offset += 2) {
+      this.pcmPeak = Math.max(this.pcmPeak, Math.abs(pcm.getInt16(offset, true)) / 32768);
+    }
   }
 
   private requestCommit(): Promise<void> {
@@ -133,6 +175,7 @@ export class ScribeConnection {
     const completion = new Promise<void>((yes, no) => { resolve = yes; reject = no; });
     const timer = setTimeout(() => this.fail(new Error('Final audio was not confirmed. Review and acknowledge any missing words before ending.')), 10000);
     this.commit = { boundary: this.sentSamples + paddingSamples, completion, resolve, reject, timer };
+    this.commitRequests++;
     try { this.transmit(new Uint8Array(paddingSamples * 2), true); }
     catch (error) { this.fail(error instanceof Error ? error : new Error('Could not commit final audio.')); }
     return completion;
@@ -152,6 +195,8 @@ export class ScribeConnection {
     const end = words.length ? words[words.length - 1].end * 1000 : pending.boundary / 16;
     const startMs = Math.max(this.lastEndMs, Math.round(Math.min(start, pending.boundary / 16)));
     const endMs = Math.max(startMs, Math.round(Math.min(end, pending.boundary / 16)));
+    this.commitConfirmations++;
+    this.finalEvents++;
     this.confirmedSamples = pending.boundary;
     this.commit = undefined;
     clearTimeout(pending.timer);
@@ -202,5 +247,6 @@ export class ScribeConnection {
     // Audio never persists beyond the live connection, including failure/discard.
     // Keep queuedBytes as an uncertainty marker after releasing the buffers.
     this.queued = [];
+    this.resampler = new Pcm16Resampler();
   }
 }

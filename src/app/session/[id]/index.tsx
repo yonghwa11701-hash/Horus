@@ -1,8 +1,8 @@
 import * as Haptics from 'expo-haptics';
-import { router, useLocalSearchParams } from 'expo-router';
+import { Redirect, router, useLocalSearchParams } from 'expo-router';
 import { usePreventRemove } from 'expo-router/react-navigation';
-import { useEffect, useRef, useState } from 'react';
-import { AccessibilityInfo, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { AccessibilityInfo, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeIn, FadeOut, LinearTransition } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -10,6 +10,7 @@ import { Banner, Btn, confirm } from '@/components/ui';
 import { C } from '@/constants/theme';
 import { useConsultationVoice } from '@/hooks/use-consultation-voice';
 import { loadConsultation, subscribeToConsultation } from '@/lib/consultations';
+import { isConsultationId } from '@/lib/consultation-state';
 import type { Suggestion, TranscriptSegment } from '@/types/consultation';
 
 const RANK = { critical: 0, high: 1, medium: 2, low: 3 } as const;
@@ -39,10 +40,27 @@ function merge(rows: Rows, incoming: Suggestion[]): Rows {
   return next;
 }
 
-export default function Live() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+export default function LiveRoute() {
+  const { id } = useLocalSearchParams<{ id: string | string[] }>();
+  if (!isConsultationId(id)) return <Redirect href="/" />;
+  return <Live key={id} id={id} />;
+}
+
+function Live({ id }: { id: string }) {
   const [error, setError] = useState<string | null>(null);
-  const voice = useConsultationVoice({ sessionId: id, onError: (e) => setError(e.message) });
+  const [segments, setSegments] = useState<Map<string, TranscriptSegment>>(new Map());
+  const addSegments = useCallback((incoming: TranscriptSegment[]) => {
+    setSegments((current) => {
+      const next = new Map(current);
+      incoming.forEach((segment) => next.set(segment.id, segment));
+      return next;
+    });
+  }, []);
+  const voice = useConsultationVoice({
+    sessionId: id, onError: (e) => setError(e.message),
+    // A durable save acknowledgement updates the UI even if Realtime is delayed.
+    onSegment: (segment) => addSegments([segment]),
+  });
   const [rows, setRows] = useState<Rows>(new Map());
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
   const [answered, setAnswered] = useState<Suggestion[]>([]);
@@ -50,7 +68,6 @@ export default function Live() {
   const [paused, setPaused] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [ending, setEnding] = useState(false);
-  const [segments, setSegments] = useState<Map<string, TranscriptSegment>>(new Map());
   const [showTranscript, setShowTranscript] = useState(false);
   const rowsRef = useRef<Rows>(rows);
   const dismissedRef = useRef(dismissed);
@@ -65,11 +82,13 @@ export default function Live() {
 
   function listen() {
     setError(null);
-    voice.start().then(() => setPaused(false), () => {});
+    voice.start().then(() => setPaused(false), (e) => setError(e instanceof Error ? e.message : 'Could not start listening.'));
   }
 
   useEffect(() => {
-    voice.start().catch(() => {});
+    // Browsers require a direct microphone tap; mounting after the consent/API
+    // navigation is no longer a user gesture. Native keeps the automatic start.
+    if (Platform.OS !== 'web') voice.start().catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -108,18 +127,11 @@ export default function Live() {
       setRows(next);
     }
 
-    const addSegments = (rows: TranscriptSegment[]) =>
-      setSegments((m) => {
-        const next = new Map(m);
-        rows.forEach((seg) => next.set(seg.id, seg));
-        return next;
-      });
-
     let unsubscribe: (() => void) | undefined;
     let alive = true;
     subscribeToConsultation(id, {
-      onSuggestion: (q) => apply([q]),
-      onTranscript: (seg) => addSegments([seg]),
+      onSuggestion: (q) => { if (alive) apply([q]); },
+      onTranscript: (seg) => { if (alive) addSegments([seg]); },
       // Reload on every (re)subscribe so rows missed while disconnected are not lost.
       onStatus: (status) => {
         if (status === 'SUBSCRIBED') loadConsultation(id).then(({ suggestions, segments }) => {
@@ -136,21 +148,23 @@ export default function Live() {
       alive = false;
       unsubscribe?.();
     };
-  }, [id]);
+  }, [id, addSegments]);
 
   async function pause() {
     try {
       await voice.pause();
       setPaused(true);
-    } catch {}
+    } catch (e) { setError(e instanceof Error ? e.message : 'Could not pause listening.'); }
   }
 
   async function end() {
+    setError(null);
     setEnding(true);
     try {
       await voice.end();
       router.replace(`/session/${id}/ending`);
-    } catch {
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not finish saving. Retry End consultation.');
       setEnding(false);
     }
   }
@@ -179,24 +193,25 @@ export default function Live() {
           </Text>
         </View>
         <Btn
-          label={live ? '❚❚ Pause' : '▶ Resume'}
-          accessibilityLabel={live ? 'Pause listening' : 'Resume listening'}
+          label={live ? '❚❚ Pause' : paused ? '▶ Resume' : '▶ Start'}
+          accessibilityLabel={live ? 'Pause listening' : paused ? 'Resume listening' : 'Start microphone'}
           variant={live ? 'outline' : 'primary'}
-          disabled={busy || ending || (!live && !paused)}
+          disabled={busy || ending || voice.unconfirmedAudio}
           onPress={live ? pause : listen}
           style={{ minHeight: 48, paddingHorizontal: 14 }}
         />
       </View>
 
       {paused && !live && <Banner text="Horus isn’t listening. Nothing is being recorded." />}
+      {voice.inputWarning && <Banner text={voice.inputWarning} />}
       {voice.unconfirmedAudio && (
         <Banner
           text="The last few seconds of audio may not have been captured."
           action={{ label: 'Continue anyway', onPress: voice.acknowledgeUnconfirmedAudio }}
         />
       )}
-      {error && !voice.unconfirmedAudio && voice.phase === 'error' && (
-        <Banner text={`Not listening: ${error}`} action={{ label: 'Try again', onPress: listen }} />
+      {error && !voice.unconfirmedAudio && (
+        <Banner text={error} action={voice.phase === 'error' ? { label: 'Try again', onPress: listen } : undefined} />
       )}
 
       <ScrollView contentContainerStyle={s.qs}>
@@ -208,7 +223,7 @@ export default function Live() {
             <Text style={s.link}>Transcript ›</Text>
           </Pressable>
         </View>
-        {active.length === 0 && answered.length === 0 && <Text style={s.empty}>{live ? 'Listening… questions' : 'Questions'} will appear here.</Text>}
+        {active.length === 0 && answered.length === 0 && <Text style={s.empty}>{live ? 'Listening… questions will appear here.' : busy ? 'Connecting microphone…' : 'Start listening to see suggested questions.'}</Text>}
         {active.map((q, i) => (
           <Animated.View key={q.question_id} layout={LinearTransition} entering={FadeIn} exiting={FadeOut} style={[s.q, i === 0 && s.qTop]}>
             <View style={s.tagRow}>
@@ -243,6 +258,7 @@ export default function Live() {
         visible={showTranscript}
         segments={[...segments.values()].sort((a, b) => a.sequence - b.sequence)}
         partial={voice.partialTranscript}
+        pendingCount={voice.pendingCount}
         status={statusLabel}
         onClose={() => setShowTranscript(false)}
       />
@@ -252,8 +268,8 @@ export default function Live() {
 
 const clock = (ms: number) => `${String(Math.floor(ms / 60000)).padStart(2, '0')}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
 
-function LiveTranscript({ visible, segments, partial, status, onClose }: {
-  visible: boolean; segments: TranscriptSegment[]; partial: string; status: string; onClose: () => void;
+function LiveTranscript({ visible, segments, partial, pendingCount, status, onClose }: {
+  visible: boolean; segments: TranscriptSegment[]; partial: string; pendingCount: number; status: string; onClose: () => void;
 }) {
   const scroll = useRef<ScrollView>(null);
   return (
@@ -263,10 +279,11 @@ function LiveTranscript({ visible, segments, partial, status, onClose }: {
           <Text style={s.tsTitle} accessibilityRole="header">
             Transcript
           </Text>
-          <Text style={s.time}>{status} · newest at the bottom</Text>
+          <Text style={s.time}>{status} · {segments.length} saved · newest at the bottom</Text>
         </View>
         <ScrollView ref={scroll} onContentSizeChange={() => scroll.current?.scrollToEnd({ animated: false })} contentContainerStyle={s.tsBody}>
-          {segments.length === 0 && !partial && <Text style={s.empty}>Nothing heard yet.</Text>}
+          {segments.length === 0 && !partial && !pendingCount && <Text style={s.empty}>Nothing heard yet.</Text>}
+          {pendingCount > 0 && <Text style={s.empty}>Saving transcript…</Text>}
           {segments.map((seg) => (
             <View key={seg.id}>
               <Text style={s.segTime}>{clock(seg.start_ms)}</Text>
@@ -274,9 +291,12 @@ function LiveTranscript({ visible, segments, partial, status, onClose }: {
             </View>
           ))}
           {!!partial && (
-            <Text style={s.partial} accessibilityLiveRegion="polite">
-              {partial}…
-            </Text>
+            <View>
+              <Text style={s.segTime}>Live · not saved yet</Text>
+              <Text style={s.partial} accessibilityLiveRegion="polite">
+                {partial}…
+              </Text>
+            </View>
           )}
         </ScrollView>
         <View style={s.foot}>

@@ -1,6 +1,8 @@
 import { FunctionsHttpError } from '@supabase/supabase-js';
 import { randomUUID } from 'expo-crypto';
 import { ensureAnonymousSession, getSupabase } from './supabase';
+import { voiceDebug } from './voice/debug';
+import { isConsultationId } from './consultation-state';
 import { API_ACCEPT, PATIENT_ARTIFACTS_BUCKET } from '@/types/consultation';
 import type {
   ArtifactEnvelope, FinalTranscriptInput, Session, SessionArtifact,
@@ -12,6 +14,26 @@ export class ConsultationApiError extends Error {
 }
 
 async function invoke<Response>(name: string, body: Record<string, unknown>): Promise<Response> {
+  const startedAt = Date.now();
+  voiceDebug('request', { function_name: name, outcome: 'requested', session_id_valid: isConsultationId(body.session_id) });
+  try {
+    if (!isConsultationId(body.session_id)) {
+      throw new ConsultationApiError('No valid consultation is open. Return to Home and start a consultation.', undefined, 'invalid_session_id');
+    }
+    const data = await invokeResponse<Response>(name, body);
+    voiceDebug('request', { function_name: name, outcome: 'success', duration_ms: Date.now() - startedAt });
+    return data;
+  } catch (error) {
+    voiceDebug('request', {
+      function_name: name, outcome: 'failure', duration_ms: Date.now() - startedAt,
+      status: error instanceof ConsultationApiError ? error.status : undefined,
+      error_code: error instanceof ConsultationApiError ? error.code : undefined,
+    });
+    throw error;
+  }
+}
+
+async function invokeResponse<Response>(name: string, body: Record<string, unknown>): Promise<Response> {
   await ensureAnonymousSession();
   const { data, error } = await getSupabase().functions.invoke<Response>(name, {
     body, headers: { Accept: API_ACCEPT },

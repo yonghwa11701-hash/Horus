@@ -1,7 +1,7 @@
 import { randomUUID } from 'expo-crypto';
 import { router } from 'expo-router';
 import { usePreventRemove } from 'expo-router/react-navigation';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -14,17 +14,22 @@ export default function Consent() {
   const [sessionId] = useState(() => randomUUID()); // reused on retry so a retry is the same consultation
   const [agreed, setAgreed] = useState(false);
   const [pending, setPending] = useState(false);
+  const [created, setCreated] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Leaving mid-request would let the pending result open Live anyway.
-  usePreventRemove(pending, () => {});
+  usePreventRemove(pending && !created, () => {});
+  useEffect(() => {
+    // Navigate after the successful render has released the pending-request guard.
+    if (created) router.replace(`/session/${sessionId}`);
+  }, [created, sessionId]);
 
   async function start() {
     setPending(true);
     setError(null);
     try {
       await createConsultation(agreed, sessionId);
-      router.replace(`/session/${sessionId}`);
+      setCreated(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Couldn’t start. Try again.');
       setPending(false);
