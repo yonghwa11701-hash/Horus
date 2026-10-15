@@ -23,11 +23,16 @@ function callModel(promptFile, input) {
     p.stderr.on("data", (d) => (err += d));
     p.on("close", (code) => {
       if (code !== 0) return reject(new Error(`${promptFile} exited ${code}: ${err || out}`));
-      const text = JSON.parse(out).result.trim();
-      // The prompts say "return only JSON"; tolerate a code fence but record that it happened.
-      const m = text.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/);
-      try { resolve({ json: JSON.parse(m ? m[1] : text), fenced: !!m }); }
-      catch { reject(new Error(`${promptFile} returned non-JSON:\n${text}`)); }
+      try {
+        const envelope = JSON.parse(out);
+        if (typeof envelope?.result !== "string") throw new Error("CLI response is missing a string result");
+        const text = envelope.result.trim();
+        // The prompts say "return only JSON"; tolerate a code fence but record that it happened.
+        const m = text.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/);
+        resolve({ json: JSON.parse(m ? m[1] : text), fenced: !!m });
+      } catch (error) {
+        reject(new Error(`${promptFile} returned invalid JSON: ${error.message}\n${out}`));
+      }
     });
     p.stdin.end(JSON.stringify(input));
   });
