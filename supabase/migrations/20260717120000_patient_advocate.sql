@@ -101,8 +101,10 @@ begin
     end if;
     new.updated_at := now();
   end if;
-  if tg_table_name = 'session_artifacts' and not starts_with(new.storage_path, parent.user_id::text || '/' || parent.id::text || '/') then
-    raise exception using errcode = 'PT422', message = 'Invalid artifact path';
+  if tg_table_name = 'session_artifacts' then
+    if not starts_with(new.storage_path, parent.user_id::text || '/' || parent.id::text || '/') then
+      raise exception using errcode = 'PT422', message = 'Invalid artifact path';
+    end if;
   end if;
   if tg_table_name = 'agent_events' then
     if new.actor = 'user' and new.actor_user_id <> parent.user_id then

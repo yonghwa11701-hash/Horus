@@ -68,11 +68,11 @@ export type Database = {
     Functions: {
       create_consultation: {
         Args: { p_id: string; p_consent: boolean };
-        Returns: Database['public']['Tables']['sessions']['Row'];
+        Returns: Database['public']['Tables']['sessions']['Row'][];
       };
       transition_consultation: {
         Args: { p_session_id: string; p_status: Database['public']['Enums']['session_status'] };
-        Returns: Database['public']['Tables']['sessions']['Row'];
+        Returns: Database['public']['Tables']['sessions']['Row'][];
       };
       append_transcript: {
         Args: {
@@ -80,7 +80,7 @@ export type Database = {
           p_start_ms: number; p_end_ms: number;
           p_source: Database['public']['Enums']['transcript_source'];
         };
-        Returns: Database['public']['Tables']['transcript_segments']['Row'];
+        Returns: Database['public']['Tables']['transcript_segments']['Row'][];
       };
       reserve_scribe_token: {
         Args: { p_session_id: string };
@@ -88,7 +88,7 @@ export type Database = {
       };
       complete_consultation: {
         Args: { p_session_id: string };
-        Returns: Database['public']['Tables']['sessions']['Row'];
+        Returns: Database['public']['Tables']['sessions']['Row'][];
       };
     };
     Enums: {

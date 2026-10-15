@@ -13,7 +13,7 @@ type SegmentInput = {
 };
 
 export async function createSession(body: { session_id: string; consent: true }, ctx: RequestContext) {
-  const { data, error } = await ctx.db.rpc('create_consultation', { p_id: body.session_id, p_consent: body.consent });
+  const { data, error } = await ctx.db.rpc('create_consultation', { p_id: body.session_id, p_consent: body.consent }).single();
   if (error) databaseError(error);
   return { session: data };
 }
@@ -41,7 +41,7 @@ export async function appendTranscript(body: SegmentInput, ctx: RequestContext) 
   const { data: segment, error } = await ctx.db.rpc('append_transcript', {
     p_id: body.id, p_session_id: body.session_id, p_sequence: body.sequence, p_text: body.text,
     p_start_ms: body.start_ms, p_end_ms: body.end_ms, p_source: body.source,
-  });
+  }).single();
   if (error) databaseError(error);
   if (segment.processing_status === 'completed') return { segment, agent_dispatch: 'not_needed' };
   // Persistence is the durable handoff. No agent deployment is required to transcribe.
@@ -77,7 +77,7 @@ export async function updateSession(
 ) {
   const { data: session, error } = await ctx.db.rpc('transition_consultation', {
     p_session_id: body.session_id, p_status: body.status,
-  });
+  }).single();
   if (error) databaseError(error);
   // Stop/drain microphone and persist final segments BEFORE transitioning to ending.
   // Retry this request if snapshots fail; the ending transition is idempotent.
@@ -94,7 +94,7 @@ export async function discardSession(body: { session_id: string }, ctx: RequestC
   await ownedSession(ctx.db, ctx.userId, body.session_id);
   const { data: session, error } = await ctx.db.rpc('transition_consultation', {
     p_session_id: body.session_id, p_status: 'discarding',
-  });
+  }).single();
   if (error) databaseError(error);
   const admin = adminClient();
   await removeSessionFiles(admin, session);
