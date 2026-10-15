@@ -1,7 +1,7 @@
 {
-  "events": ["start", "audio", "scribe", "save", "error", "stop", "discard", "acknowledge", "state", "request"],
-  "numbers": ["captured_ms", "level_percent", "max_level_percent", "sample_rate", "sent_ms", "buffered_ms", "commit_requests", "commit_confirmations", "partial_events", "final_events", "text_chars", "sequence", "status", "duration_ms", "pcm_peak_percent"],
-  "booleans": ["connected", "session_id_valid"],
+  "events": ["start", "audio", "scribe", "save", "error", "stop", "discard", "acknowledge", "state", "request", "input"],
+  "numbers": ["captured_ms", "level_percent", "max_level_percent", "sample_rate", "sent_ms", "buffered_ms", "commit_requests", "commit_confirmations", "partial_events", "final_events", "text_chars", "sequence", "status", "duration_ms", "pcm_peak_percent", "input_channels"],
+  "booleans": ["connected", "session_id_valid", "input_enabled", "input_muted", "input_live", "context_running"],
   "strings": {
     "platform": ["web", "android", "ios", "windows", "macos"],
     "phase": ["idle", "starting", "recording", "stopping", "error"],

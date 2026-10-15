@@ -259,5 +259,8 @@ export function useConsultationVoice(options: Options) {
     setPhase('idle');
   }, []);
 
-  return { phase, partialTranscript, pendingCount, diagnostics, unconfirmedAudio, acknowledgeUnconfirmedAudio, start, stop, pause, end, discard, flush };
+  const inputWarning = phase === 'recording' && diagnostics.captured_ms >= 3000 && diagnostics.max_level_percent === 0
+    ? 'No microphone signal yet. Speak to check the input; if it stays silent, check your selected microphone and mute settings.'
+    : null;
+  return { phase, partialTranscript, pendingCount, diagnostics, inputWarning, unconfirmedAudio, acknowledgeUnconfirmedAudio, start, stop, pause, end, discard, flush };
 }

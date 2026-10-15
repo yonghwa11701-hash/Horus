@@ -185,6 +185,7 @@ function Live({ id }: { id: string }) {
       </View>
 
       {paused && !live && <Banner text="Horus isn’t listening. Nothing is being recorded." />}
+      {voice.inputWarning && <Banner text={voice.inputWarning} />}
       {voice.unconfirmedAudio && (
         <Banner
           text="The last few seconds of audio may not have been captured."
