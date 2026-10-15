@@ -1,4 +1,4 @@
-import type { Database, Json } from './database';
+import type { Database, Json } from './database.ts';
 
 export type Session = Database['public']['Tables']['sessions']['Row'];
 export type TranscriptSegment = Database['public']['Tables']['transcript_segments']['Row'];
@@ -17,7 +17,7 @@ export type VoiceFunctions = {
   'get-scribe-token': { request: { session_id: string }; response: { token: string; expires_in: number } };
   'append-transcript': {
     request: FinalTranscriptInput;
-    response: { segment: TranscriptSegment; agent_dispatch: 'delivered' | 'pending' | 'not_needed' };
+    response: { segment: TranscriptSegment; agent_dispatch: 'scheduled' | 'pending' | 'not_needed' };
   };
   'update-session': { request: { session_id: string; status: SessionTransition }; response: { session: Session } };
   'discard-session': { request: { session_id: string }; response: { discarded: true } };

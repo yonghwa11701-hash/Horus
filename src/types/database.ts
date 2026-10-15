@@ -82,6 +82,10 @@ export type Database = {
         };
         Returns: Database['public']['Tables']['transcript_segments']['Row'];
       };
+      reserve_scribe_token: {
+        Args: { p_session_id: string };
+        Returns: undefined;
+      };
       complete_consultation: {
         Args: { p_session_id: string };
         Returns: Database['public']['Tables']['sessions']['Row'];
