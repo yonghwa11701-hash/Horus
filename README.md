@@ -60,7 +60,7 @@ Join our community of developers creating universal apps.
 
 Horus was built by a five-person team at the Accel hackathon (October 2026).
 
-- **Yong Hwa Hong** ([@yonghwa11701-hash](https://github.com/yonghwa11701-hash)): co-developer; built the AI agent pipeline (live question prompts, consultation summaries and their evaluation) and the user interface, and led clinical and product direction. Code was written on a teammate's machine during the hackathon, so it appears in the history under that teammate's account.
+- **Yong Hwa Hong** ([@yonghwa11701-hash](https://github.com/yonghwa11701-hash)): co-developer; worked on the AI agent pipeline (live question prompts, consultation summaries and their evaluation) and the user interface. Code was written on a teammate's machine during the hackathon, so it appears in the history under that teammate's account.
 - [@E-gonito](https://github.com/E-gonito)
 - [@MizuUchiha](https://github.com/MizuUchiha)
 - Kendrick Low
